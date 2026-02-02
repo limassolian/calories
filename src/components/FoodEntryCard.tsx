@@ -134,7 +134,7 @@ const styles = StyleSheet.create({
   description: {
     flex: 1,
     fontSize: typography.sizes.md,
-    fontWeight: typography.weights.medium,
+    fontWeight: '500',
     color: colors.text,
     marginRight: spacing.md,
     lineHeight: 22,
@@ -152,7 +152,7 @@ const styles = StyleSheet.create({
   },
   caloriesValue: {
     fontSize: typography.sizes.lg,
-    fontWeight: typography.weights.bold,
+    fontWeight: '700',
     color: colors.text,
   },
   caloriesUnit: {
@@ -175,7 +175,7 @@ const styles = StyleSheet.create({
   },
   sourceIconText: {
     fontSize: typography.sizes.xs,
-    fontWeight: typography.weights.bold,
+    fontWeight: '700',
   },
   moreSourcesText: {
     fontSize: typography.sizes.xs,
@@ -195,7 +195,7 @@ const styles = StyleSheet.create({
   errorText: {
     fontSize: typography.sizes.sm,
     color: colors.error,
-    fontWeight: typography.weights.medium,
+    fontWeight: '500',
   },
 });
 

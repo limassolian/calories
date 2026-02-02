@@ -306,7 +306,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: typography.sizes.md,
-    fontWeight: typography.weights.semibold,
+    fontWeight: '600',
     color: colors.text,
   },
   headerButtons: {
@@ -337,7 +337,7 @@ const styles = StyleSheet.create({
   },
   foodDescription: {
     fontSize: typography.sizes.xl,
-    fontWeight: typography.weights.bold,
+    fontWeight: '700',
     color: colors.text,
     marginBottom: spacing.lg,
     lineHeight: 28,
@@ -364,7 +364,7 @@ const styles = StyleSheet.create({
   },
   caloriesValue: {
     fontSize: 48,
-    fontWeight: typography.weights.bold,
+    fontWeight: '700',
     color: colors.calories,
   },
   caloriesLabel: {
@@ -395,15 +395,15 @@ const styles = StyleSheet.create({
   macroLabel: {
     fontSize: typography.sizes.md,
     color: colors.text,
-    fontWeight: typography.weights.medium,
+    fontWeight: '500',
   },
   macroValue: {
     fontSize: typography.sizes.lg,
-    fontWeight: typography.weights.bold,
+    fontWeight: '700',
   },
   macroUnit: {
     fontSize: typography.sizes.sm,
-    fontWeight: typography.weights.regular,
+    fontWeight: '400',
   },
   sourcesSection: {
     marginBottom: spacing.lg,
@@ -434,7 +434,7 @@ const styles = StyleSheet.create({
   },
   sourceName: {
     fontSize: typography.sizes.sm,
-    fontWeight: typography.weights.medium,
+    fontWeight: '500',
   },
   thoughtProcessSection: {
     marginBottom: spacing.lg,
@@ -469,7 +469,7 @@ const styles = StyleSheet.create({
   editLinkText: {
     fontSize: typography.sizes.sm,
     color: colors.primary,
-    fontWeight: typography.weights.medium,
+    fontWeight: '500',
   },
   editContainer: {
     marginBottom: spacing.lg,
@@ -483,7 +483,7 @@ const styles = StyleSheet.create({
   editLabel: {
     fontSize: typography.sizes.md,
     color: colors.text,
-    fontWeight: typography.weights.medium,
+    fontWeight: '500',
   },
   editInput: {
     backgroundColor: colors.background,
@@ -510,7 +510,7 @@ const styles = StyleSheet.create({
   cancelButtonText: {
     fontSize: typography.sizes.md,
     color: colors.textSecondary,
-    fontWeight: typography.weights.medium,
+    fontWeight: '500',
   },
   saveButton: {
     backgroundColor: colors.primary,
@@ -521,7 +521,7 @@ const styles = StyleSheet.create({
   saveButtonText: {
     fontSize: typography.sizes.md,
     color: colors.card,
-    fontWeight: typography.weights.semibold,
+    fontWeight: '600',
   },
 });
 

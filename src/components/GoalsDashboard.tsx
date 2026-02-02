@@ -150,7 +150,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: typography.sizes.xl,
-    fontWeight: typography.weights.bold,
+    fontWeight: '700',
     color: colors.text,
     marginBottom: spacing.lg,
   },
@@ -176,19 +176,19 @@ const styles = StyleSheet.create({
   },
   progressLabel: {
     fontSize: typography.sizes.md,
-    fontWeight: typography.weights.medium,
+    fontWeight: '500',
     color: colors.text,
   },
   progressValue: {
     fontSize: typography.sizes.md,
-    fontWeight: typography.weights.bold,
+    fontWeight: '700',
     color: colors.text,
   },
   progressValueOver: {
     color: colors.error,
   },
   progressGoal: {
-    fontWeight: typography.weights.regular,
+    fontWeight: '400',
     color: colors.textSecondary,
   },
   progressBarBackground: {
@@ -220,7 +220,7 @@ const styles = StyleSheet.create({
   },
   quickStatValue: {
     fontSize: typography.sizes.md,
-    fontWeight: typography.weights.bold,
+    fontWeight: '700',
   },
   quickStatLabel: {
     fontSize: typography.sizes.sm,

@@ -253,7 +253,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: typography.sizes.xl,
-    fontWeight: typography.weights.bold,
+    fontWeight: '700',
     color: colors.text,
   },
   headerRight: {
@@ -268,7 +268,7 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: typography.sizes.lg,
-    fontWeight: typography.weights.bold,
+    fontWeight: '700',
     color: colors.text,
     marginBottom: spacing.xs,
   },
@@ -307,7 +307,7 @@ const styles = StyleSheet.create({
   },
   goalLabel: {
     fontSize: typography.sizes.md,
-    fontWeight: typography.weights.semibold,
+    fontWeight: '600',
     color: colors.text,
   },
   goalUnit: {
@@ -321,7 +321,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     fontSize: typography.sizes.lg,
-    fontWeight: typography.weights.bold,
+    fontWeight: '700',
     color: colors.text,
     width: 90,
     textAlign: 'center',
@@ -340,7 +340,7 @@ const styles = StyleSheet.create({
   },
   appName: {
     fontSize: typography.sizes.xl,
-    fontWeight: typography.weights.bold,
+    fontWeight: '700',
     color: colors.text,
     marginBottom: spacing.xs,
   },
@@ -362,7 +362,7 @@ const styles = StyleSheet.create({
   resetButtonText: {
     fontSize: typography.sizes.md,
     color: colors.error,
-    fontWeight: typography.weights.medium,
+    fontWeight: '500',
   },
   saveButtonContainer: {
     paddingHorizontal: spacing.lg,
@@ -380,7 +380,7 @@ const styles = StyleSheet.create({
   },
   saveButtonText: {
     fontSize: typography.sizes.md,
-    fontWeight: typography.weights.bold,
+    fontWeight: '700',
     color: colors.card,
   },
 });

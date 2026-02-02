@@ -109,7 +109,7 @@ const styles = StyleSheet.create({
   },
   remainingValue: {
     fontSize: typography.sizes.xxxl,
-    fontWeight: typography.weights.bold,
+    fontWeight: '700',
     color: colors.text,
   },
   remainingLabel: {
@@ -172,7 +172,7 @@ const styles = StyleSheet.create({
   addIcon: {
     fontSize: typography.sizes.xl,
     color: colors.card,
-    fontWeight: typography.weights.bold,
+    fontWeight: '700',
   },
   keyboardButton: {
     width: 40,

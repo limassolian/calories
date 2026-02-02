@@ -61,7 +61,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: typography.sizes.md,
-    fontWeight: typography.weights.semibold,
+    fontWeight: '600',
     color: colors.text,
   },
   rightSection: {
@@ -84,7 +84,7 @@ const styles = StyleSheet.create({
   },
   caloriesValue: {
     fontSize: typography.sizes.md,
-    fontWeight: typography.weights.bold,
+    fontWeight: '700',
     color: colors.text,
   },
   settingsButton: {

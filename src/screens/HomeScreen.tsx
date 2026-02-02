@@ -218,7 +218,7 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: typography.sizes.lg,
-    fontWeight: typography.weights.semibold,
+    fontWeight: '600',
     color: colors.text,
     marginBottom: spacing.md,
     marginTop: spacing.lg,
@@ -233,7 +233,7 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {
     fontSize: typography.sizes.lg,
-    fontWeight: typography.weights.semibold,
+    fontWeight: '600',
     color: colors.text,
     marginBottom: spacing.sm,
   },
