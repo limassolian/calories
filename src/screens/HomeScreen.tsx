@@ -19,7 +19,6 @@ import {
   GoalsDashboard,
 } from '../components';
 import { useCalories } from '../context/CaloriesContext';
-import { useVoiceInput } from '../hooks';
 import { FoodEntry } from '../types';
 import { colors, spacing, typography } from '../theme';
 
@@ -67,8 +66,6 @@ export const HomeScreen: React.FC = () => {
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  const { isRecording, isProcessing, startRecording, stopRecording } = useVoiceInput();
-
   const handleAddEntry = useCallback(
     async (text: string) => {
       await addEntry(text);
@@ -100,16 +97,9 @@ export const HomeScreen: React.FC = () => {
     [deleteEntry]
   );
 
-  const handleVoicePress = useCallback(async () => {
-    if (isRecording) {
-      const transcription = await stopRecording();
-      if (transcription) {
-        await addEntry(transcription);
-      }
-    } else {
-      await startRecording();
-    }
-  }, [isRecording, startRecording, stopRecording, addEntry]);
+  const handleVoicePress = useCallback(() => {
+    // Voice input disabled - expo-av deprecated
+  }, []);
 
   const handleSettingsPress = useCallback(() => {
     navigation.navigate('Settings');
@@ -189,7 +179,7 @@ export const HomeScreen: React.FC = () => {
           onSubmit={handleAddEntry}
           remainingCalories={remainingCalories}
           onVoicePress={handleVoicePress}
-          isVoiceActive={isRecording || isProcessing}
+          isVoiceActive={false}
         />
 
         <NutritionDetailsModal
