@@ -20,6 +20,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Ionicons } from '@expo/vector-icons';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -1101,7 +1102,7 @@ export default function App() {
             <Text style={styles.headerTitle}>Today</Text>
           </View>
           <TouchableOpacity style={styles.settingsButton} onPress={() => setShowSettings(true)}>
-            <Text style={styles.settingsIcon}>⚙️</Text>
+            <Ionicons name="settings-outline" size={22} color="#1A1A1A" />
           </TouchableOpacity>
         </View>
 
@@ -1161,10 +1162,10 @@ export default function App() {
           )}
           <View style={styles.inputRow}>
             <TouchableOpacity style={styles.iconButton} onPress={takePhoto} disabled={isAnalyzing}>
-              <Text style={styles.iconButtonText}>📷</Text>
+              <Ionicons name="camera-outline" size={22} color="#1A1A1A" />
             </TouchableOpacity>
             <TouchableOpacity style={styles.iconButton} onPress={pickImage} disabled={isAnalyzing}>
-              <Text style={styles.iconButtonText}>🖼️</Text>
+              <Ionicons name="image-outline" size={22} color="#1A1A1A" />
             </TouchableOpacity>
             <TextInput
               style={styles.input}
@@ -1310,7 +1311,6 @@ const styles = StyleSheet.create({
   headerGreeting: { fontSize: 14, color: '#666' },
   headerTitle: { fontSize: 28, fontWeight: '700', color: '#1A1A1A' },
   settingsButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#FFF', justifyContent: 'center', alignItems: 'center' },
-  settingsIcon: { fontSize: 20 },
   content: { flex: 1, paddingHorizontal: 20 },
   caloriesCard: { backgroundColor: '#FF8C42', borderRadius: 20, padding: 24, marginBottom: 16, alignItems: 'center' },
   caloriesLabel: { fontSize: 14, color: 'rgba(255,255,255,0.8)', marginBottom: 4 },
@@ -1351,7 +1351,6 @@ const styles = StyleSheet.create({
   analyzingText: { fontSize: 13, color: '#FF8C42', marginLeft: 8, fontWeight: '500' },
   inputRow: { flexDirection: 'row', alignItems: 'center' },
   iconButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#FFF', justifyContent: 'center', alignItems: 'center', marginRight: 8 },
-  iconButtonText: { fontSize: 20 },
   input: { flex: 1, backgroundColor: '#FFF', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, fontSize: 16, color: '#1A1A1A', marginRight: 8 },
   addButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#FF8C42', justifyContent: 'center', alignItems: 'center' },
   addButtonDisabled: { opacity: 0.5 },
