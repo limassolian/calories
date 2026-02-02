@@ -15,7 +15,6 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
 
 // ============ CONFIGURATION ============
 // API key loaded from .env file (EXPO_PUBLIC_CLAUDE_API_KEY)
@@ -227,18 +226,10 @@ const fallbackEstimation = (description: string): NutritionResult => {
   };
 };
 
-// Convert image to base64
-const imageToBase64 = async (uri: string): Promise<string> => {
-  const base64 = await FileSystem.readAsStringAsync(uri, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
-  return base64;
-};
-
 export default function App() {
   const [entries, setEntries] = useState<FoodEntry[]>([]);
   const [inputText, setInputText] = useState('');
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedImage, setSelectedImage] = useState<{ uri: string; base64: string } | null>(null);
   const [showImageModal, setShowImageModal] = useState(false);
   const [selectedEntry, setSelectedEntry] = useState<FoodEntry | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -267,11 +258,15 @@ export default function App() {
       mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [4, 3],
-      quality: 0.5,
+      quality: 0.3,
+      base64: true,
     });
 
-    if (!result.canceled && result.assets[0]) {
-      setSelectedImage(result.assets[0].uri);
+    if (!result.canceled && result.assets[0] && result.assets[0].base64) {
+      setSelectedImage({
+        uri: result.assets[0].uri,
+        base64: result.assets[0].base64,
+      });
     }
   };
 
@@ -285,11 +280,15 @@ export default function App() {
     const result = await ImagePicker.launchCameraAsync({
       allowsEditing: true,
       aspect: [4, 3],
-      quality: 0.5,
+      quality: 0.3,
+      base64: true,
     });
 
-    if (!result.canceled && result.assets[0]) {
-      setSelectedImage(result.assets[0].uri);
+    if (!result.canceled && result.assets[0] && result.assets[0].base64) {
+      setSelectedImage({
+        uri: result.assets[0].uri,
+        base64: result.assets[0].base64,
+      });
     }
   };
 
@@ -299,22 +298,11 @@ export default function App() {
     setIsAnalyzing(true);
 
     try {
-      let imageBase64: string | undefined;
-
-      if (selectedImage) {
-        try {
-          imageBase64 = await imageToBase64(selectedImage);
-          console.log('Image base64 length:', imageBase64.length);
-        } catch (imgError: any) {
-          console.error('Image encoding error:', imgError);
-          Alert.alert('Image Error', `Could not process image: ${imgError.message}`);
-          setIsAnalyzing(false);
-          return;
-        }
-      }
+      const imageBase64 = selectedImage?.base64;
+      const imageUri = selectedImage?.uri;
 
       const description = inputText.trim() || 'Food from photo';
-      const result = await analyzeWithAI(description, imageBase64, selectedImage || undefined);
+      const result = await analyzeWithAI(description, imageBase64, imageUri);
 
       const newEntry: FoodEntry = {
         id: Date.now().toString(),
@@ -323,7 +311,7 @@ export default function App() {
         protein: result.protein,
         carbs: result.carbs,
         fat: result.fat,
-        imageUri: selectedImage || undefined,
+        imageUri: imageUri,
         aiAnalysis: result.analysis,
       };
 
@@ -465,7 +453,7 @@ export default function App() {
         {/* Selected Image Preview */}
         {selectedImage && (
           <View style={styles.imagePreviewContainer}>
-            <Image source={{ uri: selectedImage }} style={styles.imagePreview} />
+            <Image source={{ uri: selectedImage.uri }} style={styles.imagePreview} />
             <TouchableOpacity style={styles.removeImageButton} onPress={clearSelectedImage}>
               <Text style={styles.removeImageText}>✕</Text>
             </TouchableOpacity>
