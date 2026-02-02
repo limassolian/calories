@@ -169,9 +169,16 @@ Guidelines:
     }
 
     throw new Error('Invalid response format');
-  } catch (error) {
+  } catch (error: any) {
     console.error('AI analysis error:', error);
-    return fallbackEstimation(description);
+    // Show error to user for debugging
+    if (imageBase64) {
+      console.error('Image size (chars):', imageBase64.length);
+    }
+    return {
+      ...fallbackEstimation(description),
+      analysis: `AI error: ${error.message || 'Unknown error'}. Using estimate.`,
+    };
   }
 };
 
@@ -257,11 +264,10 @@ export default function App() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [4, 3],
       quality: 0.5,
-      base64: false,
     });
 
     if (!result.canceled && result.assets[0]) {
@@ -280,7 +286,6 @@ export default function App() {
       allowsEditing: true,
       aspect: [4, 3],
       quality: 0.5,
-      base64: false,
     });
 
     if (!result.canceled && result.assets[0]) {
