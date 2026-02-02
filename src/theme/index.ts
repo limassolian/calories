@@ -57,6 +57,8 @@ export const borderRadius = {
   full: 9999,
 };
 
+type FontWeight = 'normal' | 'bold' | '100' | '200' | '300' | '400' | '500' | '600' | '700' | '800' | '900';
+
 export const typography = {
   sizes: {
     xs: 11,
@@ -68,10 +70,10 @@ export const typography = {
     xxxl: 32,
   },
   weights: {
-    regular: '400' as const,
-    medium: '500' as const,
-    semibold: '600' as const,
-    bold: '700' as const,
+    regular: '400' as FontWeight,
+    medium: '500' as FontWeight,
+    semibold: '600' as FontWeight,
+    bold: '700' as FontWeight,
   },
 };
 
