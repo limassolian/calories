@@ -199,7 +199,7 @@ const fallbackEstimation = (description: string): NutritionResult => {
     carbs: 35,
     fat: 12,
     description,
-    analysis: 'Using default estimate. Add Claude API key for accurate AI analysis.',
+    analysis: 'Estimated based on average meal values.',
   };
 };
 
@@ -218,7 +218,6 @@ export default function App() {
   const [showImageModal, setShowImageModal] = useState(false);
   const [selectedEntry, setSelectedEntry] = useState<FoodEntry | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const goals = DEFAULT_GOALS;
 
   const totals = entries.reduce(
@@ -386,8 +385,6 @@ export default function App() {
     </TouchableOpacity>
   );
 
-  const hasApiKey = Boolean(CLAUDE_API_KEY);
-
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.container}>
@@ -395,14 +392,7 @@ export default function App() {
 
         {/* Header */}
         <View style={styles.header}>
-          <View>
-            <Text style={styles.headerTitle}>Today</Text>
-            {!hasApiKey && (
-              <TouchableOpacity onPress={() => setShowApiKeyModal(true)}>
-                <Text style={styles.apiKeyHint}>⚠️ Add API key for AI</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+          <Text style={styles.headerTitle}>Today</Text>
           <View style={styles.caloriesBadge}>
             <Text style={styles.caloriesIcon}>🔥</Text>
             <Text style={styles.caloriesRemaining}>{remainingCalories}</Text>
@@ -417,16 +407,6 @@ export default function App() {
             {renderProgressBar('Protein', totals.protein, goals.protein, '#FF9F43')}
             {renderProgressBar('Carbs', totals.carbs, goals.carbs, '#FF4757')}
             {renderProgressBar('Fat', totals.fat, goals.fat, '#26DE81')}
-          </View>
-
-          {/* AI Info Card */}
-          <View style={styles.aiInfoCard}>
-            <Text style={styles.aiInfoTitle}>🤖 AI-Powered Analysis</Text>
-            <Text style={styles.aiInfoText}>
-              {hasApiKey
-                ? "Claude AI analyzes your food photos and descriptions for accurate nutrition data."
-                : "Add your Claude API key to enable AI-powered food recognition and calorie estimation."}
-            </Text>
           </View>
 
           {/* Entries */}
@@ -546,36 +526,6 @@ export default function App() {
           </TouchableOpacity>
         </Modal>
 
-        {/* API Key Info Modal */}
-        <Modal
-          visible={showApiKeyModal}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setShowApiKeyModal(false)}
-        >
-          <TouchableOpacity
-            style={styles.modalOverlay}
-            activeOpacity={1}
-            onPress={() => setShowApiKeyModal(false)}
-          >
-            <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>🔑 Add Claude API Key</Text>
-              <Text style={styles.apiKeyInstructions}>
-                To enable AI-powered food recognition:{'\n\n'}
-                1. Get an API key from console.anthropic.com{'\n\n'}
-                2. Create a file called .env in your project:{'\n\n'}
-                EXPO_PUBLIC_CLAUDE_API_KEY=your_key_here{'\n\n'}
-                3. Restart the app
-              </Text>
-              <TouchableOpacity
-                style={styles.modalCloseButton}
-                onPress={() => setShowApiKeyModal(false)}
-              >
-                <Text style={styles.modalCloseText}>Got it</Text>
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </Modal>
       </SafeAreaView>
     </SafeAreaProvider>
   );
@@ -597,11 +547,6 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '700',
     color: '#1A1A1A',
-  },
-  apiKeyHint: {
-    fontSize: 12,
-    color: '#FF8C42',
-    marginTop: 2,
   },
   caloriesBadge: {
     flexDirection: 'row',
@@ -635,23 +580,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1A1A1A',
     marginBottom: 16,
-  },
-  aiInfoCard: {
-    backgroundColor: '#E8F4FD',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 16,
-  },
-  aiInfoTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1A1A1A',
-    marginBottom: 4,
-  },
-  aiInfoText: {
-    fontSize: 13,
-    color: '#555',
-    lineHeight: 18,
   },
   progressItem: {
     marginBottom: 12,
@@ -918,11 +846,5 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#1A1A1A',
-  },
-  apiKeyInstructions: {
-    fontSize: 14,
-    color: '#555',
-    lineHeight: 22,
-    marginVertical: 16,
   },
 });
