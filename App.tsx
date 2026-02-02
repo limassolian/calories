@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,13 +11,19 @@ import {
   Alert,
   Modal,
   ActivityIndicator,
+  Animated,
+  Dimensions,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 // ============ CONFIGURATION ============
-// API key loaded from .env file (EXPO_PUBLIC_CLAUDE_API_KEY)
 const CLAUDE_API_KEY = process.env.EXPO_PUBLIC_CLAUDE_API_KEY || '';
 // ========================================
 
@@ -31,14 +37,22 @@ interface FoodEntry {
   fat: number;
   imageUri?: string;
   aiAnalysis?: string;
-  isAnalyzing?: boolean;
 }
 
-interface Goals {
-  calories: number;
-  protein: number;
-  carbs: number;
-  fat: number;
+interface UserProfile {
+  name: string;
+  weight: number;
+  height: number;
+  age: number;
+  gender: 'male' | 'female' | 'other';
+  activityLevel: 'sedentary' | 'light' | 'moderate' | 'active' | 'very_active';
+  goal: 'lose' | 'maintain' | 'gain';
+  useMetric: boolean;
+  calorieGoal: number;
+  proteinGoal: number;
+  carbsGoal: number;
+  fatGoal: number;
+  onboardingComplete: boolean;
 }
 
 interface NutritionResult {
@@ -50,11 +64,73 @@ interface NutritionResult {
   analysis: string;
 }
 
-const DEFAULT_GOALS: Goals = {
-  calories: 2000,
-  protein: 120,
-  carbs: 250,
-  fat: 65,
+const DEFAULT_PROFILE: UserProfile = {
+  name: '',
+  weight: 70,
+  height: 170,
+  age: 30,
+  gender: 'male',
+  activityLevel: 'moderate',
+  goal: 'maintain',
+  useMetric: true,
+  calorieGoal: 2000,
+  proteinGoal: 120,
+  carbsGoal: 250,
+  fatGoal: 65,
+  onboardingComplete: false,
+};
+
+// Calculate recommended calories based on user info
+const calculateRecommendedCalories = (profile: UserProfile): number => {
+  const { weight, height, age, gender, activityLevel, goal } = profile;
+
+  // BMR using Mifflin-St Jeor
+  let bmr: number;
+  if (gender === 'male') {
+    bmr = 10 * weight + 6.25 * height - 5 * age + 5;
+  } else {
+    bmr = 10 * weight + 6.25 * height - 5 * age - 161;
+  }
+
+  // Activity multiplier
+  const multipliers = {
+    sedentary: 1.2,
+    light: 1.375,
+    moderate: 1.55,
+    active: 1.725,
+    very_active: 1.9,
+  };
+
+  let tdee = bmr * multipliers[activityLevel];
+
+  // Adjust for goal
+  if (goal === 'lose') tdee -= 500;
+  if (goal === 'gain') tdee += 300;
+
+  return Math.round(tdee);
+};
+
+// Calculate macros based on calories
+const calculateMacros = (calories: number, goal: string) => {
+  let proteinRatio = 0.25;
+  let fatRatio = 0.25;
+  let carbsRatio = 0.5;
+
+  if (goal === 'lose') {
+    proteinRatio = 0.30;
+    fatRatio = 0.25;
+    carbsRatio = 0.45;
+  } else if (goal === 'gain') {
+    proteinRatio = 0.25;
+    fatRatio = 0.20;
+    carbsRatio = 0.55;
+  }
+
+  return {
+    protein: Math.round((calories * proteinRatio) / 4),
+    fat: Math.round((calories * fatRatio) / 9),
+    carbs: Math.round((calories * carbsRatio) / 4),
+  };
 };
 
 // Get media type from URI
@@ -63,7 +139,7 @@ const getMediaType = (uri: string): string => {
   if (lower.includes('.png')) return 'image/png';
   if (lower.includes('.gif')) return 'image/gif';
   if (lower.includes('.webp')) return 'image/webp';
-  return 'image/jpeg'; // Default to JPEG for camera photos
+  return 'image/jpeg';
 };
 
 // AI Service for nutrition analysis
@@ -72,14 +148,12 @@ const analyzeWithAI = async (
   imageBase64?: string,
   imageUri?: string
 ): Promise<NutritionResult> => {
-  // If no API key, use fallback estimation
   if (!CLAUDE_API_KEY) {
     return fallbackEstimation(description);
   }
 
   try {
     const messages: any[] = [];
-
     const systemPrompt = `You are a nutrition expert AI. Analyze the food described or shown and provide accurate nutritional estimates.
 
 IMPORTANT: Respond ONLY with a valid JSON object in this exact format, no other text:
@@ -141,20 +215,13 @@ Guidelines:
     });
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.error('API error response:', errorData);
       throw new Error(`API error: ${response.status}`);
     }
 
     const data = await response.json();
-    if (!data.content || !data.content[0]) {
-      console.error('Unexpected API response:', data);
-      throw new Error('Invalid API response');
-    }
     const content = data.content[0].text;
-
-    // Parse JSON response
     const jsonMatch = content.match(/\{[\s\S]*\}/);
+
     if (jsonMatch) {
       const result = JSON.parse(jsonMatch[0]);
       return {
@@ -169,71 +236,708 @@ Guidelines:
 
     throw new Error('Invalid response format');
   } catch (error: any) {
-    console.error('AI analysis error:', error);
-    // Show error to user for debugging
-    if (imageBase64) {
-      console.error('Image size (chars):', imageBase64.length);
-    }
     return {
       ...fallbackEstimation(description),
-      analysis: `AI error: ${error.message || 'Unknown error'}. Using estimate.`,
+      analysis: `AI error: ${error.message}. Using estimate.`,
     };
   }
 };
 
-// Fallback when API is unavailable
 const fallbackEstimation = (description: string): NutritionResult => {
   const lower = description.toLowerCase();
-
   const foodDatabase: Record<string, Omit<NutritionResult, 'description' | 'analysis'>> = {
     'burger': { calories: 540, protein: 25, carbs: 45, fat: 29 },
-    'ramen': { calories: 450, protein: 12, carbs: 65, fat: 15 },
-    'noodle': { calories: 450, protein: 12, carbs: 65, fat: 15 },
     'salad': { calories: 250, protein: 15, carbs: 20, fat: 12 },
     'pizza': { calories: 285, protein: 12, carbs: 36, fat: 10 },
     'chicken': { calories: 335, protein: 38, carbs: 0, fat: 8 },
     'rice': { calories: 206, protein: 4, carbs: 45, fat: 0 },
-    'egg': { calories: 155, protein: 13, carbs: 1, fat: 11 },
-    'sandwich': { calories: 350, protein: 18, carbs: 40, fat: 12 },
-    'coffee': { calories: 120, protein: 6, carbs: 12, fat: 5 },
-    'latte': { calories: 120, protein: 6, carbs: 12, fat: 5 },
-    'smoothie': { calories: 280, protein: 8, carbs: 52, fat: 4 },
-    'steak': { calories: 450, protein: 42, carbs: 0, fat: 30 },
-    'fish': { calories: 200, protein: 25, carbs: 0, fat: 10 },
     'pasta': { calories: 400, protein: 12, carbs: 70, fat: 8 },
-    'sushi': { calories: 300, protein: 15, carbs: 40, fat: 8 },
-    'tacos': { calories: 380, protein: 18, carbs: 35, fat: 18 },
-    'burrito': { calories: 550, protein: 22, carbs: 60, fat: 22 },
   };
 
   for (const [food, nutrition] of Object.entries(foodDatabase)) {
     if (lower.includes(food)) {
-      return {
-        ...nutrition,
-        description,
-        analysis: `Estimated based on typical ${food} nutritional values.`,
-      };
+      return { ...nutrition, description, analysis: `Estimated based on typical ${food}.` };
     }
   }
 
-  return {
-    calories: 300,
-    protein: 15,
-    carbs: 35,
-    fat: 12,
-    description,
-    analysis: 'Estimated based on average meal values.',
-  };
+  return { calories: 300, protein: 15, carbs: 35, fat: 12, description, analysis: 'Estimated.' };
 };
 
+// ============ ONBOARDING COMPONENT ============
+interface OnboardingProps {
+  onComplete: (profile: UserProfile) => void;
+}
+
+const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
+  const [step, setStep] = useState(0);
+  const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(50)).current;
+  const scaleAnim = useRef(new Animated.Value(0.8)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    // Entrance animation
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 600,
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: 0,
+        duration: 600,
+        useNativeDriver: true,
+      }),
+      Animated.spring(scaleAnim, {
+        toValue: 1,
+        friction: 8,
+        tension: 40,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    // Pulse animation for icons
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1.1,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  }, [step]);
+
+  const animateToNextStep = (nextStep: number) => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: -50,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setStep(nextStep);
+      slideAnim.setValue(50);
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: true,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 400,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    });
+  };
+
+  const nextStep = () => {
+    if (step < 5) {
+      animateToNextStep(step + 1);
+    } else {
+      // Calculate goals
+      const calories = calculateRecommendedCalories(profile);
+      const macros = calculateMacros(calories, profile.goal);
+      const finalProfile = {
+        ...profile,
+        calorieGoal: calories,
+        proteinGoal: macros.protein,
+        carbsGoal: macros.carbs,
+        fatGoal: macros.fat,
+        onboardingComplete: true,
+      };
+      onComplete(finalProfile);
+    }
+  };
+
+  const prevStep = () => {
+    if (step > 0) {
+      animateToNextStep(step - 1);
+    }
+  };
+
+  const renderStep = () => {
+    switch (step) {
+      case 0:
+        return (
+          <View style={onboardingStyles.stepContent}>
+            <Animated.Text style={[onboardingStyles.emoji, { transform: [{ scale: pulseAnim }] }]}>
+              🥗
+            </Animated.Text>
+            <Text style={onboardingStyles.title}>Welcome to Calories</Text>
+            <Text style={onboardingStyles.subtitle}>
+              Your AI-powered nutrition companion that makes tracking effortless
+            </Text>
+            <View style={onboardingStyles.featureList}>
+              <View style={onboardingStyles.featureItem}>
+                <Text style={onboardingStyles.featureIcon}>📸</Text>
+                <Text style={onboardingStyles.featureText}>Snap a photo to log meals</Text>
+              </View>
+              <View style={onboardingStyles.featureItem}>
+                <Text style={onboardingStyles.featureIcon}>🤖</Text>
+                <Text style={onboardingStyles.featureText}>AI analyzes your food instantly</Text>
+              </View>
+              <View style={onboardingStyles.featureItem}>
+                <Text style={onboardingStyles.featureIcon}>📊</Text>
+                <Text style={onboardingStyles.featureText}>Track progress toward your goals</Text>
+              </View>
+            </View>
+          </View>
+        );
+
+      case 1:
+        return (
+          <View style={onboardingStyles.stepContent}>
+            <Animated.Text style={[onboardingStyles.emoji, { transform: [{ scale: pulseAnim }] }]}>
+              👋
+            </Animated.Text>
+            <Text style={onboardingStyles.title}>What's your name?</Text>
+            <TextInput
+              style={onboardingStyles.input}
+              value={profile.name}
+              onChangeText={(text) => setProfile({ ...profile, name: text })}
+              placeholder="Enter your name"
+              placeholderTextColor="#999"
+              autoFocus
+            />
+          </View>
+        );
+
+      case 2:
+        return (
+          <View style={onboardingStyles.stepContent}>
+            <Animated.Text style={[onboardingStyles.emoji, { transform: [{ scale: pulseAnim }] }]}>
+              ⚖️
+            </Animated.Text>
+            <Text style={onboardingStyles.title}>Your measurements</Text>
+
+            <View style={onboardingStyles.toggleRow}>
+              <TouchableOpacity
+                style={[onboardingStyles.toggleButton, profile.useMetric ? onboardingStyles.toggleActive : null]}
+                onPress={() => setProfile({ ...profile, useMetric: true })}
+              >
+                <Text style={[onboardingStyles.toggleText, profile.useMetric ? onboardingStyles.toggleTextActive : null]}>
+                  Metric (kg/cm)
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[onboardingStyles.toggleButton, !profile.useMetric ? onboardingStyles.toggleActive : null]}
+                onPress={() => setProfile({ ...profile, useMetric: false })}
+              >
+                <Text style={[onboardingStyles.toggleText, !profile.useMetric ? onboardingStyles.toggleTextActive : null]}>
+                  Imperial (lb/ft)
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={onboardingStyles.inputRow}>
+              <View style={onboardingStyles.inputGroup}>
+                <Text style={onboardingStyles.inputLabel}>Weight ({profile.useMetric ? 'kg' : 'lb'})</Text>
+                <TextInput
+                  style={onboardingStyles.inputSmall}
+                  value={String(profile.weight)}
+                  onChangeText={(text) => setProfile({ ...profile, weight: Number(text) || 0 })}
+                  keyboardType="numeric"
+                  placeholder={profile.useMetric ? "70" : "154"}
+                  placeholderTextColor="#999"
+                />
+              </View>
+              <View style={onboardingStyles.inputGroup}>
+                <Text style={onboardingStyles.inputLabel}>Height ({profile.useMetric ? 'cm' : 'in'})</Text>
+                <TextInput
+                  style={onboardingStyles.inputSmall}
+                  value={String(profile.height)}
+                  onChangeText={(text) => setProfile({ ...profile, height: Number(text) || 0 })}
+                  keyboardType="numeric"
+                  placeholder={profile.useMetric ? "170" : "67"}
+                  placeholderTextColor="#999"
+                />
+              </View>
+            </View>
+
+            <View style={onboardingStyles.inputRow}>
+              <View style={onboardingStyles.inputGroup}>
+                <Text style={onboardingStyles.inputLabel}>Age</Text>
+                <TextInput
+                  style={onboardingStyles.inputSmall}
+                  value={String(profile.age)}
+                  onChangeText={(text) => setProfile({ ...profile, age: Number(text) || 0 })}
+                  keyboardType="numeric"
+                  placeholder="30"
+                  placeholderTextColor="#999"
+                />
+              </View>
+              <View style={onboardingStyles.inputGroup}>
+                <Text style={onboardingStyles.inputLabel}>Gender</Text>
+                <View style={onboardingStyles.genderRow}>
+                  {(['male', 'female'] as const).map((g) => (
+                    <TouchableOpacity
+                      key={g}
+                      style={[onboardingStyles.genderButton, profile.gender === g ? onboardingStyles.genderActive : null]}
+                      onPress={() => setProfile({ ...profile, gender: g })}
+                    >
+                      <Text style={onboardingStyles.genderEmoji}>{g === 'male' ? '👨' : '👩'}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </View>
+          </View>
+        );
+
+      case 3:
+        return (
+          <View style={onboardingStyles.stepContent}>
+            <Animated.Text style={[onboardingStyles.emoji, { transform: [{ scale: pulseAnim }] }]}>
+              🏃
+            </Animated.Text>
+            <Text style={onboardingStyles.title}>Activity level</Text>
+            <Text style={onboardingStyles.subtitle}>How active are you on a typical day?</Text>
+
+            {[
+              { key: 'sedentary', label: 'Sedentary', desc: 'Little to no exercise', emoji: '🛋️' },
+              { key: 'light', label: 'Light', desc: 'Light exercise 1-3 days/week', emoji: '🚶' },
+              { key: 'moderate', label: 'Moderate', desc: 'Moderate exercise 3-5 days/week', emoji: '🏃' },
+              { key: 'active', label: 'Active', desc: 'Hard exercise 6-7 days/week', emoji: '💪' },
+              { key: 'very_active', label: 'Very Active', desc: 'Athlete or physical job', emoji: '🏋️' },
+            ].map((item) => (
+              <TouchableOpacity
+                key={item.key}
+                style={[
+                  onboardingStyles.optionCard,
+                  profile.activityLevel === item.key ? onboardingStyles.optionCardActive : null
+                ]}
+                onPress={() => setProfile({ ...profile, activityLevel: item.key as any })}
+              >
+                <Text style={onboardingStyles.optionEmoji}>{item.emoji}</Text>
+                <View style={onboardingStyles.optionText}>
+                  <Text style={onboardingStyles.optionTitle}>{item.label}</Text>
+                  <Text style={onboardingStyles.optionDesc}>{item.desc}</Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        );
+
+      case 4:
+        return (
+          <View style={onboardingStyles.stepContent}>
+            <Animated.Text style={[onboardingStyles.emoji, { transform: [{ scale: pulseAnim }] }]}>
+              🎯
+            </Animated.Text>
+            <Text style={onboardingStyles.title}>What's your goal?</Text>
+
+            {[
+              { key: 'lose', label: 'Lose Weight', desc: 'Calorie deficit for fat loss', emoji: '📉', color: '#FF6B6B' },
+              { key: 'maintain', label: 'Maintain Weight', desc: 'Keep your current weight', emoji: '⚖️', color: '#4ECDC4' },
+              { key: 'gain', label: 'Build Muscle', desc: 'Calorie surplus for muscle gain', emoji: '📈', color: '#45B7D1' },
+            ].map((item) => (
+              <TouchableOpacity
+                key={item.key}
+                style={[
+                  onboardingStyles.goalCard,
+                  profile.goal === item.key ? { ...onboardingStyles.goalCardActive, borderColor: item.color } : null
+                ]}
+                onPress={() => setProfile({ ...profile, goal: item.key as any })}
+              >
+                <Text style={onboardingStyles.goalEmoji}>{item.emoji}</Text>
+                <Text style={onboardingStyles.goalTitle}>{item.label}</Text>
+                <Text style={onboardingStyles.goalDesc}>{item.desc}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        );
+
+      case 5:
+        const previewCalories = calculateRecommendedCalories(profile);
+        const previewMacros = calculateMacros(previewCalories, profile.goal);
+        return (
+          <View style={onboardingStyles.stepContent}>
+            <Animated.Text style={[onboardingStyles.emoji, { transform: [{ scale: pulseAnim }] }]}>
+              ✨
+            </Animated.Text>
+            <Text style={onboardingStyles.title}>Your personalized plan</Text>
+            <Text style={onboardingStyles.subtitle}>Based on your profile, we recommend:</Text>
+
+            <View style={onboardingStyles.summaryCard}>
+              <View style={onboardingStyles.summaryRow}>
+                <Text style={onboardingStyles.summaryLabel}>🔥 Daily Calories</Text>
+                <Text style={onboardingStyles.summaryValue}>{previewCalories}</Text>
+              </View>
+              <View style={onboardingStyles.summaryDivider} />
+              <View style={onboardingStyles.macrosRow}>
+                <View style={onboardingStyles.macroItem}>
+                  <Text style={onboardingStyles.macroValue}>{previewMacros.protein}g</Text>
+                  <Text style={onboardingStyles.macroLabel}>Protein</Text>
+                </View>
+                <View style={onboardingStyles.macroItem}>
+                  <Text style={onboardingStyles.macroValue}>{previewMacros.carbs}g</Text>
+                  <Text style={onboardingStyles.macroLabel}>Carbs</Text>
+                </View>
+                <View style={onboardingStyles.macroItem}>
+                  <Text style={onboardingStyles.macroValue}>{previewMacros.fat}g</Text>
+                  <Text style={onboardingStyles.macroLabel}>Fat</Text>
+                </View>
+              </View>
+            </View>
+
+            <Text style={onboardingStyles.readyText}>Ready to start your journey? 🚀</Text>
+          </View>
+        );
+
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <SafeAreaView style={onboardingStyles.container}>
+      <StatusBar style="dark" />
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={onboardingStyles.keyboardView}
+      >
+        {/* Progress dots */}
+        <View style={onboardingStyles.progressContainer}>
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <View
+              key={i}
+              style={[
+                onboardingStyles.progressDot,
+                i === step ? onboardingStyles.progressDotActive : null,
+                i < step ? onboardingStyles.progressDotComplete : null,
+              ]}
+            />
+          ))}
+        </View>
+
+        <ScrollView
+          contentContainerStyle={onboardingStyles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Animated.View
+            style={[
+              onboardingStyles.animatedContainer,
+              {
+                opacity: fadeAnim,
+                transform: [
+                  { translateY: slideAnim },
+                  { scale: scaleAnim },
+                ],
+              },
+            ]}
+          >
+            {renderStep()}
+          </Animated.View>
+        </ScrollView>
+
+        {/* Navigation buttons */}
+        <View style={onboardingStyles.buttonContainer}>
+          {step > 0 && (
+            <TouchableOpacity style={onboardingStyles.backButton} onPress={prevStep}>
+              <Text style={onboardingStyles.backButtonText}>Back</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            style={[onboardingStyles.nextButton, step === 0 ? { flex: 1 } : null]}
+            onPress={nextStep}
+          >
+            <Text style={onboardingStyles.nextButtonText}>
+              {step === 5 ? "Let's Go! 🎉" : step === 0 ? "Get Started" : "Continue"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+};
+
+// ============ SETTINGS COMPONENT ============
+interface SettingsProps {
+  profile: UserProfile;
+  onSave: (profile: UserProfile) => void;
+  onClose: () => void;
+}
+
+const Settings: React.FC<SettingsProps> = ({ profile, onSave, onClose }) => {
+  const [editedProfile, setEditedProfile] = useState(profile);
+  const [showCustomGoals, setShowCustomGoals] = useState(false);
+
+  const handleSave = () => {
+    let finalProfile = editedProfile;
+    if (!showCustomGoals) {
+      const calories = calculateRecommendedCalories(editedProfile);
+      const macros = calculateMacros(calories, editedProfile.goal);
+      finalProfile = {
+        ...editedProfile,
+        calorieGoal: calories,
+        proteinGoal: macros.protein,
+        carbsGoal: macros.carbs,
+        fatGoal: macros.fat,
+      };
+    }
+    onSave(finalProfile);
+    onClose();
+  };
+
+  return (
+    <SafeAreaView style={settingsStyles.container}>
+      <StatusBar style="dark" />
+      <View style={settingsStyles.header}>
+        <TouchableOpacity onPress={onClose}>
+          <Text style={settingsStyles.cancelText}>Cancel</Text>
+        </TouchableOpacity>
+        <Text style={settingsStyles.title}>Settings</Text>
+        <TouchableOpacity onPress={handleSave}>
+          <Text style={settingsStyles.saveText}>Save</Text>
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView style={settingsStyles.content} showsVerticalScrollIndicator={false}>
+        {/* Profile Section */}
+        <Text style={settingsStyles.sectionTitle}>Profile</Text>
+        <View style={settingsStyles.card}>
+          <View style={settingsStyles.inputRow}>
+            <Text style={settingsStyles.label}>Name</Text>
+            <TextInput
+              style={settingsStyles.input}
+              value={editedProfile.name}
+              onChangeText={(text) => setEditedProfile({ ...editedProfile, name: text })}
+              placeholder="Your name"
+              placeholderTextColor="#999"
+            />
+          </View>
+
+          <View style={settingsStyles.inputRow}>
+            <Text style={settingsStyles.label}>Units</Text>
+            <View style={settingsStyles.toggleRow}>
+              <TouchableOpacity
+                style={[settingsStyles.toggleBtn, editedProfile.useMetric ? settingsStyles.toggleActive : null]}
+                onPress={() => setEditedProfile({ ...editedProfile, useMetric: true })}
+              >
+                <Text style={[settingsStyles.toggleText, editedProfile.useMetric ? settingsStyles.toggleTextActive : null]}>
+                  Metric
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[settingsStyles.toggleBtn, !editedProfile.useMetric ? settingsStyles.toggleActive : null]}
+                onPress={() => setEditedProfile({ ...editedProfile, useMetric: false })}
+              >
+                <Text style={[settingsStyles.toggleText, !editedProfile.useMetric ? settingsStyles.toggleTextActive : null]}>
+                  Imperial
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={settingsStyles.inputRow}>
+            <Text style={settingsStyles.label}>Weight ({editedProfile.useMetric ? 'kg' : 'lb'})</Text>
+            <TextInput
+              style={settingsStyles.inputSmall}
+              value={String(editedProfile.weight)}
+              onChangeText={(text) => setEditedProfile({ ...editedProfile, weight: Number(text) || 0 })}
+              keyboardType="numeric"
+            />
+          </View>
+
+          <View style={settingsStyles.inputRow}>
+            <Text style={settingsStyles.label}>Height ({editedProfile.useMetric ? 'cm' : 'in'})</Text>
+            <TextInput
+              style={settingsStyles.inputSmall}
+              value={String(editedProfile.height)}
+              onChangeText={(text) => setEditedProfile({ ...editedProfile, height: Number(text) || 0 })}
+              keyboardType="numeric"
+            />
+          </View>
+
+          <View style={settingsStyles.inputRow}>
+            <Text style={settingsStyles.label}>Age</Text>
+            <TextInput
+              style={settingsStyles.inputSmall}
+              value={String(editedProfile.age)}
+              onChangeText={(text) => setEditedProfile({ ...editedProfile, age: Number(text) || 0 })}
+              keyboardType="numeric"
+            />
+          </View>
+
+          <View style={settingsStyles.inputRow}>
+            <Text style={settingsStyles.label}>Gender</Text>
+            <View style={settingsStyles.toggleRow}>
+              {(['male', 'female'] as const).map((g) => (
+                <TouchableOpacity
+                  key={g}
+                  style={[settingsStyles.toggleBtn, editedProfile.gender === g ? settingsStyles.toggleActive : null]}
+                  onPress={() => setEditedProfile({ ...editedProfile, gender: g })}
+                >
+                  <Text style={[settingsStyles.toggleText, editedProfile.gender === g ? settingsStyles.toggleTextActive : null]}>
+                    {g === 'male' ? '👨 Male' : '👩 Female'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </View>
+
+        {/* Activity & Goal Section */}
+        <Text style={settingsStyles.sectionTitle}>Activity & Goal</Text>
+        <View style={settingsStyles.card}>
+          <Text style={settingsStyles.label}>Activity Level</Text>
+          {[
+            { key: 'sedentary', label: 'Sedentary' },
+            { key: 'light', label: 'Light' },
+            { key: 'moderate', label: 'Moderate' },
+            { key: 'active', label: 'Active' },
+            { key: 'very_active', label: 'Very Active' },
+          ].map((item) => (
+            <TouchableOpacity
+              key={item.key}
+              style={[settingsStyles.optionRow, editedProfile.activityLevel === item.key ? settingsStyles.optionActive : null]}
+              onPress={() => setEditedProfile({ ...editedProfile, activityLevel: item.key as any })}
+            >
+              <Text style={settingsStyles.optionText}>{item.label}</Text>
+              {editedProfile.activityLevel === item.key && <Text>✓</Text>}
+            </TouchableOpacity>
+          ))}
+
+          <View style={settingsStyles.divider} />
+
+          <Text style={settingsStyles.label}>Goal</Text>
+          {[
+            { key: 'lose', label: 'Lose Weight' },
+            { key: 'maintain', label: 'Maintain Weight' },
+            { key: 'gain', label: 'Build Muscle' },
+          ].map((item) => (
+            <TouchableOpacity
+              key={item.key}
+              style={[settingsStyles.optionRow, editedProfile.goal === item.key ? settingsStyles.optionActive : null]}
+              onPress={() => setEditedProfile({ ...editedProfile, goal: item.key as any })}
+            >
+              <Text style={settingsStyles.optionText}>{item.label}</Text>
+              {editedProfile.goal === item.key && <Text>✓</Text>}
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Custom Goals Section */}
+        <Text style={settingsStyles.sectionTitle}>Daily Goals</Text>
+        <View style={settingsStyles.card}>
+          <TouchableOpacity
+            style={settingsStyles.customToggle}
+            onPress={() => setShowCustomGoals(!showCustomGoals)}
+          >
+            <Text style={settingsStyles.label}>Custom goals</Text>
+            <Text style={settingsStyles.toggleIndicator}>{showCustomGoals ? '✓' : '○'}</Text>
+          </TouchableOpacity>
+
+          {showCustomGoals ? (
+            <>
+              <View style={settingsStyles.inputRow}>
+                <Text style={settingsStyles.label}>Calories</Text>
+                <TextInput
+                  style={settingsStyles.inputSmall}
+                  value={String(editedProfile.calorieGoal)}
+                  onChangeText={(text) => setEditedProfile({ ...editedProfile, calorieGoal: Number(text) || 0 })}
+                  keyboardType="numeric"
+                />
+              </View>
+              <View style={settingsStyles.inputRow}>
+                <Text style={settingsStyles.label}>Protein (g)</Text>
+                <TextInput
+                  style={settingsStyles.inputSmall}
+                  value={String(editedProfile.proteinGoal)}
+                  onChangeText={(text) => setEditedProfile({ ...editedProfile, proteinGoal: Number(text) || 0 })}
+                  keyboardType="numeric"
+                />
+              </View>
+              <View style={settingsStyles.inputRow}>
+                <Text style={settingsStyles.label}>Carbs (g)</Text>
+                <TextInput
+                  style={settingsStyles.inputSmall}
+                  value={String(editedProfile.carbsGoal)}
+                  onChangeText={(text) => setEditedProfile({ ...editedProfile, carbsGoal: Number(text) || 0 })}
+                  keyboardType="numeric"
+                />
+              </View>
+              <View style={settingsStyles.inputRow}>
+                <Text style={settingsStyles.label}>Fat (g)</Text>
+                <TextInput
+                  style={settingsStyles.inputSmall}
+                  value={String(editedProfile.fatGoal)}
+                  onChangeText={(text) => setEditedProfile({ ...editedProfile, fatGoal: Number(text) || 0 })}
+                  keyboardType="numeric"
+                />
+              </View>
+            </>
+          ) : (
+            <Text style={settingsStyles.autoText}>
+              Goals will be calculated automatically based on your profile
+            </Text>
+          )}
+        </View>
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
+
+// ============ MAIN APP ============
 export default function App() {
+  const [isLoading, setIsLoading] = useState(true);
+  const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
   const [entries, setEntries] = useState<FoodEntry[]>([]);
   const [inputText, setInputText] = useState('');
   const [selectedImage, setSelectedImage] = useState<{ uri: string; base64: string } | null>(null);
   const [showImageModal, setShowImageModal] = useState(false);
   const [selectedEntry, setSelectedEntry] = useState<FoodEntry | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const goals = DEFAULT_GOALS;
+  const [showSettings, setShowSettings] = useState(false);
+
+  // Load profile from storage
+  useEffect(() => {
+    loadProfile();
+  }, []);
+
+  const loadProfile = async () => {
+    try {
+      const stored = await AsyncStorage.getItem('userProfile');
+      if (stored) {
+        setProfile(JSON.parse(stored));
+      }
+    } catch (e) {
+      console.error('Failed to load profile:', e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const saveProfile = async (newProfile: UserProfile) => {
+    try {
+      await AsyncStorage.setItem('userProfile', JSON.stringify(newProfile));
+      setProfile(newProfile);
+    } catch (e) {
+      console.error('Failed to save profile:', e);
+    }
+  };
+
+  const goals = {
+    calories: profile.calorieGoal,
+    protein: profile.proteinGoal,
+    carbs: profile.carbsGoal,
+    fat: profile.fatGoal,
+  };
 
   const totals = entries.reduce(
     (acc, entry) => ({
@@ -253,7 +957,6 @@ export default function App() {
       Alert.alert('Permission needed', 'Please allow access to your photo library');
       return;
     }
-
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsEditing: true,
@@ -261,12 +964,8 @@ export default function App() {
       quality: 0.3,
       base64: true,
     });
-
-    if (!result.canceled && result.assets[0] && result.assets[0].base64) {
-      setSelectedImage({
-        uri: result.assets[0].uri,
-        base64: result.assets[0].base64,
-      });
+    if (!result.canceled && result.assets[0]?.base64) {
+      setSelectedImage({ uri: result.assets[0].uri, base64: result.assets[0].base64 });
     }
   };
 
@@ -276,34 +975,23 @@ export default function App() {
       Alert.alert('Permission needed', 'Please allow access to your camera');
       return;
     }
-
     const result = await ImagePicker.launchCameraAsync({
       allowsEditing: true,
       aspect: [4, 3],
       quality: 0.3,
       base64: true,
     });
-
-    if (!result.canceled && result.assets[0] && result.assets[0].base64) {
-      setSelectedImage({
-        uri: result.assets[0].uri,
-        base64: result.assets[0].base64,
-      });
+    if (!result.canceled && result.assets[0]?.base64) {
+      setSelectedImage({ uri: result.assets[0].uri, base64: result.assets[0].base64 });
     }
   };
 
   const addEntry = useCallback(async () => {
     if (!inputText.trim() && !selectedImage) return;
-
     setIsAnalyzing(true);
-
     try {
-      const imageBase64 = selectedImage?.base64;
-      const imageUri = selectedImage?.uri;
-
       const description = inputText.trim() || 'Food from photo';
-      const result = await analyzeWithAI(description, imageBase64, imageUri);
-
+      const result = await analyzeWithAI(description, selectedImage?.base64, selectedImage?.uri);
       const newEntry: FoodEntry = {
         id: Date.now().toString(),
         description: result.description,
@@ -311,45 +999,30 @@ export default function App() {
         protein: result.protein,
         carbs: result.carbs,
         fat: result.fat,
-        imageUri: imageUri,
+        imageUri: selectedImage?.uri,
         aiAnalysis: result.analysis,
       };
-
       setEntries(prev => [newEntry, ...prev]);
       setInputText('');
       setSelectedImage(null);
       Keyboard.dismiss();
     } catch (error: any) {
-      console.error('Add entry error:', error);
-      Alert.alert('Error', `Failed to analyze: ${error.message || 'Unknown error'}`);
+      Alert.alert('Error', `Failed to analyze: ${error.message}`);
     } finally {
       setIsAnalyzing(false);
     }
   }, [inputText, selectedImage]);
 
   const deleteEntry = useCallback((id: string) => {
-    Alert.alert(
-      'Delete Entry',
-      'Are you sure you want to delete this entry?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => setEntries(prev => prev.filter(e => e.id !== id)),
-        },
-      ]
-    );
+    Alert.alert('Delete Entry', 'Are you sure?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => setEntries(prev => prev.filter(e => e.id !== id)) },
+    ]);
   }, []);
-
-  const clearSelectedImage = () => {
-    setSelectedImage(null);
-  };
 
   const renderProgressBar = (label: string, current: number, goal: number, color: string) => {
     const progress = Math.min(current / goal, 1);
     const isOver = current > goal;
-
     return (
       <View style={styles.progressItem} key={label}>
         <View style={styles.progressHeader}>
@@ -359,15 +1032,7 @@ export default function App() {
           </Text>
         </View>
         <View style={styles.progressBarBg}>
-          <View
-            style={[
-              styles.progressBarFill,
-              {
-                flex: progress,
-                backgroundColor: isOver ? '#FF4757' : color,
-              }
-            ]}
-          />
+          <View style={[styles.progressBarFill, { flex: progress, backgroundColor: isOver ? '#FF4757' : color }]} />
           <View style={{ flex: Math.max(0, 1 - progress) }} />
         </View>
       </View>
@@ -378,55 +1043,85 @@ export default function App() {
     <TouchableOpacity
       key={item.id}
       style={styles.entryCard}
-      onPress={() => {
-        setSelectedEntry(item);
-        setShowImageModal(true);
-      }}
+      onPress={() => { setSelectedEntry(item); setShowImageModal(true); }}
       onLongPress={() => deleteEntry(item.id)}
     >
       <View style={styles.entryRow}>
-        {item.imageUri && (
-          <Image source={{ uri: item.imageUri }} style={styles.entryThumbnail} />
-        )}
+        {item.imageUri && <Image source={{ uri: item.imageUri }} style={styles.entryThumbnail} />}
         <View style={styles.entryDetails}>
           <View style={styles.entryContent}>
             <Text style={styles.entryDescription} numberOfLines={2}>{item.description}</Text>
             <Text style={styles.entryCalories}>{item.calories} cal</Text>
           </View>
-          <Text style={styles.entryMacros}>
-            P: {item.protein}g  C: {item.carbs}g  F: {item.fat}g
-          </Text>
-          {item.aiAnalysis && (
-            <Text style={styles.entryAnalysis} numberOfLines={1}>
-              🤖 {item.aiAnalysis}
-            </Text>
-          )}
+          <Text style={styles.entryMacros}>P: {item.protein}g  C: {item.carbs}g  F: {item.fat}g</Text>
+          {item.aiAnalysis && <Text style={styles.entryAnalysis} numberOfLines={1}>🤖 {item.aiAnalysis}</Text>}
         </View>
       </View>
     </TouchableOpacity>
   );
 
+  // Loading state
+  if (isLoading) {
+    return (
+      <SafeAreaProvider>
+        <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+          <ActivityIndicator size="large" color="#FF8C42" />
+        </View>
+      </SafeAreaProvider>
+    );
+  }
+
+  // Show onboarding if not complete
+  if (!profile.onboardingComplete) {
+    return (
+      <SafeAreaProvider>
+        <Onboarding onComplete={saveProfile} />
+      </SafeAreaProvider>
+    );
+  }
+
+  // Show settings
+  if (showSettings) {
+    return (
+      <SafeAreaProvider>
+        <Settings profile={profile} onSave={saveProfile} onClose={() => setShowSettings(false)} />
+      </SafeAreaProvider>
+    );
+  }
+
+  // Main app
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.container}>
         <StatusBar style="dark" />
 
-        {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Today</Text>
-          <View style={styles.caloriesBadge}>
-            <Text style={styles.caloriesIcon}>🔥</Text>
-            <Text style={styles.caloriesRemaining}>{remainingCalories}</Text>
+          <View>
+            <Text style={styles.headerGreeting}>Hey {profile.name || 'there'}! 👋</Text>
+            <Text style={styles.headerTitle}>Today</Text>
           </View>
+          <TouchableOpacity style={styles.settingsButton} onPress={() => setShowSettings(true)}>
+            <Text style={styles.settingsIcon}>⚙️</Text>
+          </TouchableOpacity>
         </View>
 
         <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+          {/* Calories remaining card */}
+          <View style={styles.caloriesCard}>
+            <Text style={styles.caloriesLabel}>Calories remaining</Text>
+            <Text style={[styles.caloriesValue, remainingCalories < 0 ? styles.caloriesOver : null]}>
+              {remainingCalories}
+            </Text>
+            <Text style={styles.caloriesSubtext}>
+              {totals.calories} eaten • {goals.calories} goal
+            </Text>
+          </View>
+
           {/* Goals Card */}
           <View style={styles.goalsCard}>
-            <Text style={styles.goalsTitle}>Goals</Text>
-            {renderProgressBar('Calories', totals.calories, goals.calories, '#FFB800')}
+            <Text style={styles.goalsTitle}>Macros</Text>
             {renderProgressBar('Protein', totals.protein, goals.protein, '#FF9F43')}
-            {renderProgressBar('Carbs', totals.carbs, goals.carbs, '#FF4757')}
+            {renderProgressBar('Carbs', totals.carbs, goals.carbs, '#45B7D1')}
             {renderProgressBar('Fat', totals.fat, goals.fat, '#26DE81')}
           </View>
 
@@ -434,7 +1129,7 @@ export default function App() {
           {entries.length > 0 && (
             <View style={styles.entriesSection}>
               <Text style={styles.sectionTitle}>Today's Log</Text>
-              {entries.map(item => renderEntry(item))}
+              {entries.map(renderEntry)}
               <Text style={styles.hintText}>Tap for details • Long press to delete</Text>
             </View>
           )}
@@ -443,29 +1138,25 @@ export default function App() {
             <View style={styles.emptyState}>
               <Text style={styles.emptyIcon}>🍽️</Text>
               <Text style={styles.emptyTitle}>No entries yet</Text>
-              <Text style={styles.emptySubtitle}>
-                Take a photo or describe what you ate
-              </Text>
+              <Text style={styles.emptySubtitle}>Take a photo or describe what you ate</Text>
             </View>
           )}
         </ScrollView>
 
-        {/* Selected Image Preview */}
         {selectedImage && (
           <View style={styles.imagePreviewContainer}>
             <Image source={{ uri: selectedImage.uri }} style={styles.imagePreview} />
-            <TouchableOpacity style={styles.removeImageButton} onPress={clearSelectedImage}>
+            <TouchableOpacity style={styles.removeImageButton} onPress={() => setSelectedImage(null)}>
               <Text style={styles.removeImageText}>✕</Text>
             </TouchableOpacity>
           </View>
         )}
 
-        {/* Input */}
         <View style={styles.inputSection}>
           {isAnalyzing && (
             <View style={styles.analyzingBanner}>
               <ActivityIndicator size="small" color="#FF8C42" />
-              <Text style={styles.analyzingText}>🤖 AI is analyzing your food...</Text>
+              <Text style={styles.analyzingText}>🤖 AI is analyzing...</Text>
             </View>
           )}
           <View style={styles.inputRow}>
@@ -486,49 +1177,25 @@ export default function App() {
               editable={!isAnalyzing}
             />
             <TouchableOpacity
-              style={[
-                styles.addButton,
-                ((!inputText.trim() && !selectedImage) || isAnalyzing) ? styles.addButtonDisabled : null
-              ]}
+              style={[styles.addButton, ((!inputText.trim() && !selectedImage) || isAnalyzing) ? styles.addButtonDisabled : null]}
               onPress={addEntry}
               disabled={(!inputText.trim() && !selectedImage) || isAnalyzing}
             >
-              {isAnalyzing ? (
-                <ActivityIndicator size="small" color="#FFF" />
-              ) : (
-                <Text style={styles.addButtonText}>+</Text>
-              )}
+              {isAnalyzing ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.addButtonText}>+</Text>}
             </TouchableOpacity>
           </View>
         </View>
 
         {/* Entry Detail Modal */}
-        <Modal
-          visible={showImageModal}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setShowImageModal(false)}
-        >
-          <TouchableOpacity
-            style={styles.modalOverlay}
-            activeOpacity={1}
-            onPress={() => setShowImageModal(false)}
-          >
+        <Modal visible={showImageModal} transparent animationType="fade" onRequestClose={() => setShowImageModal(false)}>
+          <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowImageModal(false)}>
             <View style={styles.modalContent}>
-              {selectedEntry?.imageUri && (
-                <Image
-                  source={{ uri: selectedEntry.imageUri }}
-                  style={styles.modalImage}
-                  resizeMode="contain"
-                />
-              )}
+              {selectedEntry?.imageUri && <Image source={{ uri: selectedEntry.imageUri }} style={styles.modalImage} resizeMode="contain" />}
               {selectedEntry && (
                 <View style={styles.modalInfo}>
                   <Text style={styles.modalTitle}>{selectedEntry.description}</Text>
                   <Text style={styles.modalCalories}>{selectedEntry.calories} calories</Text>
-                  <Text style={styles.modalMacros}>
-                    Protein: {selectedEntry.protein}g • Carbs: {selectedEntry.carbs}g • Fat: {selectedEntry.fat}g
-                  </Text>
+                  <Text style={styles.modalMacros}>P: {selectedEntry.protein}g • C: {selectedEntry.carbs}g • F: {selectedEntry.fat}g</Text>
                   {selectedEntry.aiAnalysis && (
                     <View style={styles.modalAnalysisBox}>
                       <Text style={styles.modalAnalysisTitle}>🤖 AI Analysis</Text>
@@ -537,335 +1204,168 @@ export default function App() {
                   )}
                 </View>
               )}
-              <TouchableOpacity
-                style={styles.modalCloseButton}
-                onPress={() => setShowImageModal(false)}
-              >
+              <TouchableOpacity style={styles.modalCloseButton} onPress={() => setShowImageModal(false)}>
                 <Text style={styles.modalCloseText}>Close</Text>
               </TouchableOpacity>
             </View>
           </TouchableOpacity>
         </Modal>
-
       </SafeAreaView>
     </SafeAreaProvider>
   );
 }
 
+// ============ ONBOARDING STYLES ============
+const onboardingStyles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#FDF6E9' },
+  keyboardView: { flex: 1 },
+  scrollContent: { flexGrow: 1, paddingHorizontal: 24 },
+  animatedContainer: { flex: 1, justifyContent: 'center' },
+  progressContainer: { flexDirection: 'row', justifyContent: 'center', paddingVertical: 20 },
+  progressDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#DDD', marginHorizontal: 4 },
+  progressDotActive: { backgroundColor: '#FF8C42', width: 24 },
+  progressDotComplete: { backgroundColor: '#FF8C42' },
+  stepContent: { alignItems: 'center', paddingVertical: 20 },
+  emoji: { fontSize: 80, marginBottom: 24 },
+  title: { fontSize: 28, fontWeight: '700', color: '#1A1A1A', textAlign: 'center', marginBottom: 12 },
+  subtitle: { fontSize: 16, color: '#666', textAlign: 'center', marginBottom: 24, lineHeight: 24 },
+  featureList: { width: '100%', marginTop: 20 },
+  featureItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', padding: 16, borderRadius: 12, marginBottom: 12 },
+  featureIcon: { fontSize: 24, marginRight: 16 },
+  featureText: { fontSize: 16, color: '#1A1A1A', flex: 1 },
+  input: { width: '100%', backgroundColor: '#FFF', borderRadius: 12, padding: 16, fontSize: 18, color: '#1A1A1A', textAlign: 'center' },
+  toggleRow: { flexDirection: 'row', marginBottom: 20 },
+  toggleButton: { flex: 1, padding: 12, borderRadius: 8, backgroundColor: '#FFF', marginHorizontal: 4, alignItems: 'center' },
+  toggleActive: { backgroundColor: '#FF8C42' },
+  toggleText: { fontSize: 14, color: '#666' },
+  toggleTextActive: { color: '#FFF', fontWeight: '600' },
+  inputRow: { flexDirection: 'row', width: '100%', marginBottom: 16 },
+  inputGroup: { flex: 1, marginHorizontal: 4 },
+  inputLabel: { fontSize: 14, color: '#666', marginBottom: 8 },
+  inputSmall: { backgroundColor: '#FFF', borderRadius: 12, padding: 14, fontSize: 16, color: '#1A1A1A', textAlign: 'center' },
+  genderRow: { flexDirection: 'row' },
+  genderButton: { flex: 1, padding: 12, borderRadius: 8, backgroundColor: '#FFF', marginHorizontal: 2, alignItems: 'center' },
+  genderActive: { backgroundColor: '#FF8C42' },
+  genderEmoji: { fontSize: 24 },
+  optionCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', padding: 14, borderRadius: 12, marginBottom: 10, width: '100%', borderWidth: 2, borderColor: 'transparent' },
+  optionCardActive: { borderColor: '#FF8C42', backgroundColor: '#FFF5EB' },
+  optionEmoji: { fontSize: 28, marginRight: 14 },
+  optionText: { flex: 1 },
+  optionTitle: { fontSize: 16, fontWeight: '600', color: '#1A1A1A' },
+  optionDesc: { fontSize: 13, color: '#666', marginTop: 2 },
+  goalCard: { backgroundColor: '#FFF', padding: 20, borderRadius: 16, marginBottom: 12, alignItems: 'center', width: '100%', borderWidth: 2, borderColor: 'transparent' },
+  goalCardActive: { borderWidth: 2 },
+  goalEmoji: { fontSize: 40, marginBottom: 8 },
+  goalTitle: { fontSize: 18, fontWeight: '700', color: '#1A1A1A' },
+  goalDesc: { fontSize: 14, color: '#666', marginTop: 4, textAlign: 'center' },
+  summaryCard: { backgroundColor: '#FFF', borderRadius: 16, padding: 20, width: '100%', marginBottom: 20 },
+  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  summaryLabel: { fontSize: 16, color: '#666' },
+  summaryValue: { fontSize: 32, fontWeight: '700', color: '#FF8C42' },
+  summaryDivider: { height: 1, backgroundColor: '#EEE', marginVertical: 16 },
+  macrosRow: { flexDirection: 'row', justifyContent: 'space-around' },
+  macroItem: { alignItems: 'center' },
+  macroValue: { fontSize: 20, fontWeight: '700', color: '#1A1A1A' },
+  macroLabel: { fontSize: 14, color: '#666', marginTop: 4 },
+  readyText: { fontSize: 18, color: '#666', marginTop: 10 },
+  buttonContainer: { flexDirection: 'row', padding: 20, gap: 12 },
+  backButton: { paddingVertical: 16, paddingHorizontal: 24, borderRadius: 12, backgroundColor: '#EEE' },
+  backButtonText: { fontSize: 16, fontWeight: '600', color: '#666' },
+  nextButton: { flex: 2, paddingVertical: 16, borderRadius: 12, backgroundColor: '#FF8C42', alignItems: 'center' },
+  nextButtonText: { fontSize: 16, fontWeight: '600', color: '#FFF' },
+});
+
+// ============ SETTINGS STYLES ============
+const settingsStyles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#F5F5F5' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#FFF', borderBottomWidth: 1, borderBottomColor: '#EEE' },
+  cancelText: { fontSize: 16, color: '#666' },
+  title: { fontSize: 18, fontWeight: '700', color: '#1A1A1A' },
+  saveText: { fontSize: 16, fontWeight: '600', color: '#FF8C42' },
+  content: { flex: 1, padding: 16 },
+  sectionTitle: { fontSize: 14, fontWeight: '600', color: '#666', marginBottom: 8, marginTop: 16, textTransform: 'uppercase' },
+  card: { backgroundColor: '#FFF', borderRadius: 12, padding: 16, marginBottom: 8 },
+  inputRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' },
+  label: { fontSize: 16, color: '#1A1A1A' },
+  input: { flex: 1, fontSize: 16, color: '#1A1A1A', textAlign: 'right' },
+  inputSmall: { width: 80, fontSize: 16, color: '#1A1A1A', textAlign: 'right', backgroundColor: '#F5F5F5', padding: 8, borderRadius: 8 },
+  toggleRow: { flexDirection: 'row' },
+  toggleBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, backgroundColor: '#F5F5F5', marginLeft: 8 },
+  toggleActive: { backgroundColor: '#FF8C42' },
+  toggleText: { fontSize: 14, color: '#666' },
+  toggleTextActive: { color: '#FFF' },
+  divider: { height: 1, backgroundColor: '#EEE', marginVertical: 16 },
+  optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 8, borderRadius: 8, marginBottom: 4 },
+  optionActive: { backgroundColor: '#FFF5EB' },
+  optionText: { fontSize: 16, color: '#1A1A1A' },
+  customToggle: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 },
+  toggleIndicator: { fontSize: 18, color: '#FF8C42' },
+  autoText: { fontSize: 14, color: '#999', fontStyle: 'italic', marginTop: 8 },
+});
+
+// ============ MAIN STYLES ============
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FDF6E9',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#1A1A1A',
-  },
-  caloriesBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFF',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-  },
-  caloriesIcon: {
-    fontSize: 16,
-    marginRight: 4,
-  },
-  caloriesRemaining: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#1A1A1A',
-  },
-  content: {
-    flex: 1,
-    paddingHorizontal: 20,
-  },
-  goalsCard: {
-    backgroundColor: '#FFF',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-  },
-  goalsTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1A1A1A',
-    marginBottom: 16,
-  },
-  progressItem: {
-    marginBottom: 12,
-  },
-  progressHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  progressLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#1A1A1A',
-  },
-  progressValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1A1A1A',
-  },
-  progressValueOver: {
-    color: '#FF4757',
-  },
-  progressBarBg: {
-    height: 8,
-    backgroundColor: '#F0F0F0',
-    borderRadius: 4,
-    flexDirection: 'row',
-  },
-  progressBarFill: {
-    height: 8,
-    borderRadius: 4,
-  },
-  entriesSection: {
-    marginBottom: 20,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1A1A1A',
-    marginBottom: 12,
-  },
-  hintText: {
-    fontSize: 12,
-    color: '#999',
-    textAlign: 'center',
-    marginTop: 8,
-  },
-  entryCard: {
-    backgroundColor: '#FFF',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
-  },
-  entryRow: {
-    flexDirection: 'row',
-  },
-  entryThumbnail: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
-    marginRight: 12,
-  },
-  entryDetails: {
-    flex: 1,
-  },
-  entryContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 4,
-  },
-  entryDescription: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: '#1A1A1A',
-    flex: 1,
-    marginRight: 10,
-  },
-  entryCalories: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#1A1A1A',
-  },
-  entryMacros: {
-    fontSize: 12,
-    color: '#666',
-  },
-  entryAnalysis: {
-    fontSize: 11,
-    color: '#888',
-    marginTop: 4,
-    fontStyle: 'italic',
-  },
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: 40,
-  },
-  emptyIcon: {
-    fontSize: 48,
-    marginBottom: 12,
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1A1A1A',
-    marginBottom: 4,
-  },
-  emptySubtitle: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-  },
-  imagePreviewContainer: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    alignItems: 'center',
-  },
-  imagePreview: {
-    width: 120,
-    height: 90,
-    borderRadius: 12,
-  },
-  removeImageButton: {
-    position: 'absolute',
-    top: 5,
-    right: 25,
-    backgroundColor: '#FF4757',
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  removeImageText: {
-    color: '#FFF',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  inputSection: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: '#FDF6E9',
-  },
-  analyzingBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFF5EB',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    marginBottom: 10,
-  },
-  analyzingText: {
-    fontSize: 13,
-    color: '#FF8C42',
-    marginLeft: 8,
-    fontWeight: '500',
-  },
-  inputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  iconButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#FFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 8,
-  },
-  iconButtonText: {
-    fontSize: 20,
-  },
-  input: {
-    flex: 1,
-    backgroundColor: '#FFF',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: '#1A1A1A',
-    marginRight: 8,
-  },
-  addButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#FF8C42',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  addButtonDisabled: {
-    opacity: 0.5,
-  },
-  addButtonText: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: '#FFF',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.8)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContent: {
-    backgroundColor: '#FFF',
-    borderRadius: 16,
-    padding: 16,
-    width: '90%',
-    maxWidth: 400,
-  },
-  modalImage: {
-    width: '100%',
-    height: 200,
-    borderRadius: 12,
-    marginBottom: 16,
-  },
-  modalInfo: {
-    marginBottom: 16,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1A1A1A',
-    marginBottom: 8,
-  },
-  modalCalories: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#FF8C42',
-    marginBottom: 4,
-  },
-  modalMacros: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 12,
-  },
-  modalAnalysisBox: {
-    backgroundColor: '#F5F5F5',
-    borderRadius: 8,
-    padding: 12,
-  },
-  modalAnalysisTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1A1A1A',
-    marginBottom: 4,
-  },
-  modalAnalysisText: {
-    fontSize: 13,
-    color: '#555',
-    lineHeight: 18,
-  },
-  modalCloseButton: {
-    backgroundColor: '#F0F0F0',
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  modalCloseText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1A1A1A',
-  },
+  container: { flex: 1, backgroundColor: '#FDF6E9' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12 },
+  headerGreeting: { fontSize: 14, color: '#666' },
+  headerTitle: { fontSize: 28, fontWeight: '700', color: '#1A1A1A' },
+  settingsButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#FFF', justifyContent: 'center', alignItems: 'center' },
+  settingsIcon: { fontSize: 20 },
+  content: { flex: 1, paddingHorizontal: 20 },
+  caloriesCard: { backgroundColor: '#FF8C42', borderRadius: 20, padding: 24, marginBottom: 16, alignItems: 'center' },
+  caloriesLabel: { fontSize: 14, color: 'rgba(255,255,255,0.8)', marginBottom: 4 },
+  caloriesValue: { fontSize: 56, fontWeight: '700', color: '#FFF' },
+  caloriesOver: { color: '#FFE0D0' },
+  caloriesSubtext: { fontSize: 14, color: 'rgba(255,255,255,0.8)', marginTop: 8 },
+  goalsCard: { backgroundColor: '#FFF', borderRadius: 16, padding: 16, marginBottom: 16 },
+  goalsTitle: { fontSize: 18, fontWeight: '700', color: '#1A1A1A', marginBottom: 16 },
+  progressItem: { marginBottom: 12 },
+  progressHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
+  progressLabel: { fontSize: 14, fontWeight: '500', color: '#1A1A1A' },
+  progressValue: { fontSize: 14, fontWeight: '600', color: '#1A1A1A' },
+  progressValueOver: { color: '#FF4757' },
+  progressBarBg: { height: 8, backgroundColor: '#F0F0F0', borderRadius: 4, flexDirection: 'row' },
+  progressBarFill: { height: 8, borderRadius: 4 },
+  entriesSection: { marginBottom: 20 },
+  sectionTitle: { fontSize: 16, fontWeight: '600', color: '#1A1A1A', marginBottom: 12 },
+  hintText: { fontSize: 12, color: '#999', textAlign: 'center', marginTop: 8 },
+  entryCard: { backgroundColor: '#FFF', borderRadius: 12, padding: 12, marginBottom: 10 },
+  entryRow: { flexDirection: 'row' },
+  entryThumbnail: { width: 60, height: 60, borderRadius: 8, marginRight: 12 },
+  entryDetails: { flex: 1 },
+  entryContent: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 },
+  entryDescription: { fontSize: 15, fontWeight: '500', color: '#1A1A1A', flex: 1, marginRight: 10 },
+  entryCalories: { fontSize: 15, fontWeight: '700', color: '#1A1A1A' },
+  entryMacros: { fontSize: 12, color: '#666' },
+  entryAnalysis: { fontSize: 11, color: '#888', marginTop: 4, fontStyle: 'italic' },
+  emptyState: { alignItems: 'center', paddingVertical: 40 },
+  emptyIcon: { fontSize: 48, marginBottom: 12 },
+  emptyTitle: { fontSize: 18, fontWeight: '600', color: '#1A1A1A', marginBottom: 4 },
+  emptySubtitle: { fontSize: 14, color: '#666', textAlign: 'center' },
+  imagePreviewContainer: { paddingHorizontal: 20, paddingVertical: 10, alignItems: 'center' },
+  imagePreview: { width: 120, height: 90, borderRadius: 12 },
+  removeImageButton: { position: 'absolute', top: 5, right: 25, backgroundColor: '#FF4757', width: 24, height: 24, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
+  removeImageText: { color: '#FFF', fontSize: 14, fontWeight: '700' },
+  inputSection: { paddingHorizontal: 20, paddingVertical: 12, backgroundColor: '#FDF6E9' },
+  analyzingBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFF5EB', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, marginBottom: 10 },
+  analyzingText: { fontSize: 13, color: '#FF8C42', marginLeft: 8, fontWeight: '500' },
+  inputRow: { flexDirection: 'row', alignItems: 'center' },
+  iconButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#FFF', justifyContent: 'center', alignItems: 'center', marginRight: 8 },
+  iconButtonText: { fontSize: 20 },
+  input: { flex: 1, backgroundColor: '#FFF', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, fontSize: 16, color: '#1A1A1A', marginRight: 8 },
+  addButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#FF8C42', justifyContent: 'center', alignItems: 'center' },
+  addButtonDisabled: { opacity: 0.5 },
+  addButtonText: { fontSize: 24, fontWeight: '600', color: '#FFF' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center' },
+  modalContent: { backgroundColor: '#FFF', borderRadius: 16, padding: 16, width: '90%', maxWidth: 400 },
+  modalImage: { width: '100%', height: 200, borderRadius: 12, marginBottom: 16 },
+  modalInfo: { marginBottom: 16 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: '#1A1A1A', marginBottom: 8 },
+  modalCalories: { fontSize: 24, fontWeight: '700', color: '#FF8C42', marginBottom: 4 },
+  modalMacros: { fontSize: 14, color: '#666', marginBottom: 12 },
+  modalAnalysisBox: { backgroundColor: '#F5F5F5', borderRadius: 8, padding: 12 },
+  modalAnalysisTitle: { fontSize: 13, fontWeight: '600', color: '#1A1A1A', marginBottom: 4 },
+  modalAnalysisText: { fontSize: 13, color: '#555', lineHeight: 18 },
+  modalCloseButton: { backgroundColor: '#F0F0F0', paddingVertical: 12, borderRadius: 8, alignItems: 'center' },
+  modalCloseText: { fontSize: 16, fontWeight: '600', color: '#1A1A1A' },
 });
