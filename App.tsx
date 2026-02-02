@@ -302,7 +302,15 @@ export default function App() {
       let imageBase64: string | undefined;
 
       if (selectedImage) {
-        imageBase64 = await imageToBase64(selectedImage);
+        try {
+          imageBase64 = await imageToBase64(selectedImage);
+          console.log('Image base64 length:', imageBase64.length);
+        } catch (imgError: any) {
+          console.error('Image encoding error:', imgError);
+          Alert.alert('Image Error', `Could not process image: ${imgError.message}`);
+          setIsAnalyzing(false);
+          return;
+        }
       }
 
       const description = inputText.trim() || 'Food from photo';
@@ -323,8 +331,9 @@ export default function App() {
       setInputText('');
       setSelectedImage(null);
       Keyboard.dismiss();
-    } catch (error) {
-      Alert.alert('Error', 'Failed to analyze food. Please try again.');
+    } catch (error: any) {
+      console.error('Add entry error:', error);
+      Alert.alert('Error', `Failed to analyze: ${error.message || 'Unknown error'}`);
     } finally {
       setIsAnalyzing(false);
     }
