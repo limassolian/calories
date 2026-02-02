@@ -1,37 +1,38 @@
 import React from 'react';
-import { StatusBar } from 'expo-status-bar';
-import { NavigationContainer } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { CaloriesProvider } from './src/context/CaloriesContext';
-import { HomeScreen, SettingsScreen } from './src/screens';
-import { colors } from './src/theme';
-
-export type RootStackParamList = {
-  Home: undefined;
-  Settings: undefined;
-};
-
-const Stack = createNativeStackNavigator<RootStackParamList>();
+import { View, Text, StyleSheet } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 export default function App() {
   return (
     <SafeAreaProvider>
-      <CaloriesProvider>
-        <NavigationContainer>
-          <StatusBar style="dark" />
-          <Stack.Navigator
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: colors.background },
-              animation: 'slide_from_right',
-            }}
-          >
-            <Stack.Screen name="Home" component={HomeScreen} />
-            <Stack.Screen name="Settings" component={SettingsScreen} />
-          </Stack.Navigator>
-        </NavigationContainer>
-      </CaloriesProvider>
+      <SafeAreaView style={styles.container}>
+        <View style={styles.content}>
+          <Text style={styles.title}>Calories App</Text>
+          <Text style={styles.subtitle}>Loading...</Text>
+        </View>
+      </SafeAreaView>
     </SafeAreaProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#FDF6E9',
+  },
+  content: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#1A1A1A',
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 16,
+    color: '#6B6B6B',
+  },
+});
