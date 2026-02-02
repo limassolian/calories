@@ -58,10 +58,20 @@ const DEFAULT_GOALS: Goals = {
   fat: 65,
 };
 
+// Get media type from URI
+const getMediaType = (uri: string): string => {
+  const lower = uri.toLowerCase();
+  if (lower.includes('.png')) return 'image/png';
+  if (lower.includes('.gif')) return 'image/gif';
+  if (lower.includes('.webp')) return 'image/webp';
+  return 'image/jpeg'; // Default to JPEG for camera photos
+};
+
 // AI Service for nutrition analysis
 const analyzeWithAI = async (
   description: string,
-  imageBase64?: string
+  imageBase64?: string,
+  imageUri?: string
 ): Promise<NutritionResult> => {
   // If no API key, use fallback estimation
   if (!CLAUDE_API_KEY) {
@@ -92,11 +102,12 @@ Guidelines:
     let userContent: any[] = [];
 
     if (imageBase64) {
+      const mediaType = imageUri ? getMediaType(imageUri) : 'image/jpeg';
       userContent.push({
         type: "image",
         source: {
           type: "base64",
-          media_type: "image/jpeg",
+          media_type: mediaType,
           data: imageBase64,
         },
       });
@@ -131,10 +142,16 @@ Guidelines:
     });
 
     if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.error('API error response:', errorData);
       throw new Error(`API error: ${response.status}`);
     }
 
     const data = await response.json();
+    if (!data.content || !data.content[0]) {
+      console.error('Unexpected API response:', data);
+      throw new Error('Invalid API response');
+    }
     const content = data.content[0].text;
 
     // Parse JSON response
@@ -243,7 +260,8 @@ export default function App() {
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [4, 3],
-      quality: 0.7,
+      quality: 0.5,
+      base64: false,
     });
 
     if (!result.canceled && result.assets[0]) {
@@ -261,7 +279,8 @@ export default function App() {
     const result = await ImagePicker.launchCameraAsync({
       allowsEditing: true,
       aspect: [4, 3],
-      quality: 0.7,
+      quality: 0.5,
+      base64: false,
     });
 
     if (!result.canceled && result.assets[0]) {
@@ -282,7 +301,7 @@ export default function App() {
       }
 
       const description = inputText.trim() || 'Food from photo';
-      const result = await analyzeWithAI(description, imageBase64);
+      const result = await analyzeWithAI(description, imageBase64, selectedImage || undefined);
 
       const newEntry: FoodEntry = {
         id: Date.now().toString(),
