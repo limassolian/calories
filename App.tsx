@@ -5,12 +5,15 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  FlatList,
   ScrollView,
   Keyboard,
+  Image,
+  Alert,
+  Modal,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
+import * as ImagePicker from 'expo-image-picker';
 
 // Simple types
 interface FoodEntry {
@@ -20,6 +23,7 @@ interface FoodEntry {
   protein: number;
   carbs: number;
   fat: number;
+  imageUri?: string;
 }
 
 interface Goals {
@@ -37,7 +41,7 @@ const DEFAULT_GOALS: Goals = {
 };
 
 // Simple food estimator (mock AI)
-const estimateNutrition = (description: string): Omit<FoodEntry, 'id' | 'description'> => {
+const estimateNutrition = (description: string): Omit<FoodEntry, 'id' | 'description' | 'imageUri'> => {
   const lower = description.toLowerCase();
 
   if (lower.includes('burger')) {
@@ -55,6 +59,21 @@ const estimateNutrition = (description: string): Omit<FoodEntry, 'id' | 'descrip
   if (lower.includes('chicken')) {
     return { calories: 335, protein: 38, carbs: 0, fat: 8 };
   }
+  if (lower.includes('rice')) {
+    return { calories: 206, protein: 4, carbs: 45, fat: 0 };
+  }
+  if (lower.includes('egg')) {
+    return { calories: 155, protein: 13, carbs: 1, fat: 11 };
+  }
+  if (lower.includes('sandwich')) {
+    return { calories: 350, protein: 18, carbs: 40, fat: 12 };
+  }
+  if (lower.includes('coffee') || lower.includes('latte')) {
+    return { calories: 120, protein: 6, carbs: 12, fat: 5 };
+  }
+  if (lower.includes('smoothie')) {
+    return { calories: 280, protein: 8, carbs: 52, fat: 4 };
+  }
 
   // Default estimate
   return { calories: 300, protein: 15, carbs: 35, fat: 12 };
@@ -63,6 +82,9 @@ const estimateNutrition = (description: string): Omit<FoodEntry, 'id' | 'descrip
 export default function App() {
   const [entries, setEntries] = useState<FoodEntry[]>([]);
   const [inputText, setInputText] = useState('');
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [showImageModal, setShowImageModal] = useState(false);
+  const [selectedEntry, setSelectedEntry] = useState<FoodEntry | null>(null);
   const goals = DEFAULT_GOALS;
 
   const totals = entries.reduce(
@@ -77,31 +99,86 @@ export default function App() {
 
   const remainingCalories = goals.calories - totals.calories;
 
-  const addEntry = useCallback(() => {
-    if (!inputText.trim()) return;
+  const pickImage = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Please allow access to your photo library');
+      return;
+    }
 
-    const nutrition = estimateNutrition(inputText);
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      setSelectedImage(result.assets[0].uri);
+    }
+  };
+
+  const takePhoto = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Please allow access to your camera');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      setSelectedImage(result.assets[0].uri);
+    }
+  };
+
+  const addEntry = useCallback(() => {
+    if (!inputText.trim() && !selectedImage) return;
+
+    const description = inputText.trim() || 'Meal from photo';
+    const nutrition = estimateNutrition(description);
     const newEntry: FoodEntry = {
       id: Date.now().toString(),
-      description: inputText.trim(),
+      description,
       ...nutrition,
+      imageUri: selectedImage || undefined,
     };
 
     setEntries(prev => [newEntry, ...prev]);
     setInputText('');
+    setSelectedImage(null);
     Keyboard.dismiss();
-  }, [inputText]);
+  }, [inputText, selectedImage]);
 
   const deleteEntry = useCallback((id: string) => {
-    setEntries(prev => prev.filter(e => e.id !== id));
+    Alert.alert(
+      'Delete Entry',
+      'Are you sure you want to delete this entry?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => setEntries(prev => prev.filter(e => e.id !== id)),
+        },
+      ]
+    );
   }, []);
+
+  const clearSelectedImage = () => {
+    setSelectedImage(null);
+  };
 
   const renderProgressBar = (label: string, current: number, goal: number, color: string) => {
     const progress = Math.min(current / goal, 1);
     const isOver = current > goal;
 
     return (
-      <View style={styles.progressItem}>
+      <View style={styles.progressItem} key={label}>
         <View style={styles.progressHeader}>
           <Text style={styles.progressLabel}>{label}</Text>
           <Text style={[styles.progressValue, isOver ? styles.progressValueOver : null]}>
@@ -124,18 +201,32 @@ export default function App() {
     );
   };
 
-  const renderEntry = ({ item }: { item: FoodEntry }) => (
+  const renderEntry = (item: FoodEntry) => (
     <TouchableOpacity
+      key={item.id}
       style={styles.entryCard}
+      onPress={() => {
+        if (item.imageUri) {
+          setSelectedEntry(item);
+          setShowImageModal(true);
+        }
+      }}
       onLongPress={() => deleteEntry(item.id)}
     >
-      <View style={styles.entryContent}>
-        <Text style={styles.entryDescription}>{item.description}</Text>
-        <Text style={styles.entryCalories}>{item.calories} cal</Text>
+      <View style={styles.entryRow}>
+        {item.imageUri && (
+          <Image source={{ uri: item.imageUri }} style={styles.entryThumbnail} />
+        )}
+        <View style={styles.entryDetails}>
+          <View style={styles.entryContent}>
+            <Text style={styles.entryDescription} numberOfLines={2}>{item.description}</Text>
+            <Text style={styles.entryCalories}>{item.calories} cal</Text>
+          </View>
+          <Text style={styles.entryMacros}>
+            P: {item.protein}g  C: {item.carbs}g  F: {item.fat}g
+          </Text>
+        </View>
       </View>
-      <Text style={styles.entryMacros}>
-        P: {item.protein}g  C: {item.carbs}g  F: {item.fat}g
-      </Text>
     </TouchableOpacity>
   );
 
@@ -167,11 +258,8 @@ export default function App() {
           {entries.length > 0 && (
             <View style={styles.entriesSection}>
               <Text style={styles.sectionTitle}>Today's Log</Text>
-              {entries.map(item => (
-                <View key={item.id}>
-                  {renderEntry({ item })}
-                </View>
-              ))}
+              {entries.map(item => renderEntry(item))}
+              <Text style={styles.hintText}>Long press to delete</Text>
             </View>
           )}
 
@@ -179,14 +267,32 @@ export default function App() {
             <View style={styles.emptyState}>
               <Text style={styles.emptyIcon}>🍽️</Text>
               <Text style={styles.emptyTitle}>No entries yet</Text>
-              <Text style={styles.emptySubtitle}>Type what you ate below</Text>
+              <Text style={styles.emptySubtitle}>
+                Type what you ate or take a photo
+              </Text>
             </View>
           )}
         </ScrollView>
 
+        {/* Selected Image Preview */}
+        {selectedImage && (
+          <View style={styles.imagePreviewContainer}>
+            <Image source={{ uri: selectedImage }} style={styles.imagePreview} />
+            <TouchableOpacity style={styles.removeImageButton} onPress={clearSelectedImage}>
+              <Text style={styles.removeImageText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Input */}
         <View style={styles.inputSection}>
           <View style={styles.inputRow}>
+            <TouchableOpacity style={styles.iconButton} onPress={takePhoto}>
+              <Text style={styles.iconButtonText}>📷</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.iconButton} onPress={pickImage}>
+              <Text style={styles.iconButtonText}>🖼️</Text>
+            </TouchableOpacity>
             <TextInput
               style={styles.input}
               value={inputText}
@@ -197,14 +303,56 @@ export default function App() {
               returnKeyType="done"
             />
             <TouchableOpacity
-              style={[styles.addButton, !inputText.trim() ? styles.addButtonDisabled : null]}
+              style={[
+                styles.addButton,
+                (!inputText.trim() && !selectedImage) ? styles.addButtonDisabled : null
+              ]}
               onPress={addEntry}
-              disabled={!inputText.trim()}
+              disabled={!inputText.trim() && !selectedImage}
             >
               <Text style={styles.addButtonText}>+</Text>
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* Image Detail Modal */}
+        <Modal
+          visible={showImageModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowImageModal(false)}
+        >
+          <TouchableOpacity
+            style={styles.modalOverlay}
+            activeOpacity={1}
+            onPress={() => setShowImageModal(false)}
+          >
+            <View style={styles.modalContent}>
+              {selectedEntry?.imageUri && (
+                <Image
+                  source={{ uri: selectedEntry.imageUri }}
+                  style={styles.modalImage}
+                  resizeMode="contain"
+                />
+              )}
+              {selectedEntry && (
+                <View style={styles.modalInfo}>
+                  <Text style={styles.modalTitle}>{selectedEntry.description}</Text>
+                  <Text style={styles.modalCalories}>{selectedEntry.calories} calories</Text>
+                  <Text style={styles.modalMacros}>
+                    Protein: {selectedEntry.protein}g • Carbs: {selectedEntry.carbs}g • Fat: {selectedEntry.fat}g
+                  </Text>
+                </View>
+              )}
+              <TouchableOpacity
+                style={styles.modalCloseButton}
+                onPress={() => setShowImageModal(false)}
+              >
+                <Text style={styles.modalCloseText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
       </SafeAreaView>
     </SafeAreaProvider>
   );
@@ -300,17 +448,35 @@ const styles = StyleSheet.create({
     color: '#1A1A1A',
     marginBottom: 12,
   },
+  hintText: {
+    fontSize: 12,
+    color: '#999',
+    textAlign: 'center',
+    marginTop: 8,
+  },
   entryCard: {
     backgroundColor: '#FFF',
     borderRadius: 12,
-    padding: 14,
+    padding: 12,
     marginBottom: 10,
+  },
+  entryRow: {
+    flexDirection: 'row',
+  },
+  entryThumbnail: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+    marginRight: 12,
+  },
+  entryDetails: {
+    flex: 1,
   },
   entryContent: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 6,
+    marginBottom: 4,
   },
   entryDescription: {
     fontSize: 15,
@@ -345,6 +511,33 @@ const styles = StyleSheet.create({
   emptySubtitle: {
     fontSize: 14,
     color: '#666',
+    textAlign: 'center',
+  },
+  imagePreviewContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  imagePreview: {
+    width: 120,
+    height: 90,
+    borderRadius: 12,
+  },
+  removeImageButton: {
+    position: 'absolute',
+    top: 5,
+    right: 25,
+    backgroundColor: '#FF4757',
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  removeImageText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
   inputSection: {
     paddingHorizontal: 20,
@@ -355,20 +548,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  iconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  iconButtonText: {
+    fontSize: 20,
+  },
   input: {
     flex: 1,
     backgroundColor: '#FFF',
     borderRadius: 12,
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: 12,
     fontSize: 16,
     color: '#1A1A1A',
-    marginRight: 10,
+    marginRight: 8,
   },
   addButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: '#FF8C42',
     justifyContent: 'center',
     alignItems: 'center',
@@ -380,5 +585,54 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '600',
     color: '#FFF',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#FFF',
+    borderRadius: 16,
+    padding: 16,
+    width: '90%',
+    maxWidth: 400,
+  },
+  modalImage: {
+    width: '100%',
+    height: 250,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  modalInfo: {
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1A1A1A',
+    marginBottom: 8,
+  },
+  modalCalories: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#FF8C42',
+    marginBottom: 4,
+  },
+  modalMacros: {
+    fontSize: 14,
+    color: '#666',
+  },
+  modalCloseButton: {
+    backgroundColor: '#F0F0F0',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modalCloseText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1A1A1A',
   },
 });
