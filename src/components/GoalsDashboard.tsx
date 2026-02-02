@@ -25,7 +25,7 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
   icon,
   unit = '',
 }) => {
-  const progress = Math.min((current / goal) * 100, 100);
+  const progress = Math.min((current / goal) * 100, 100) / 100;
   const isOver = current > goal;
 
   return (
@@ -35,7 +35,7 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
           <Text style={styles.progressIcon}>{icon}</Text>
           <Text style={styles.progressLabel}>{label}</Text>
         </View>
-        <Text style={[styles.progressValue, isOver && styles.progressValueOver]}>
+        <Text style={[styles.progressValue, isOver ? styles.progressValueOver : null]}>
           {current}
           <Text style={styles.progressGoal}> / {goal}{unit}</Text>
         </Text>
@@ -45,11 +45,12 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
           style={[
             styles.progressBarFill,
             {
-              width: `${progress}%`,
+              flex: progress,
               backgroundColor: isOver ? colors.error : color,
             },
           ]}
         />
+        <View style={{ flex: 1 - progress }} />
       </View>
     </View>
   );
@@ -195,10 +196,10 @@ const styles = StyleSheet.create({
     height: 8,
     backgroundColor: colors.background,
     borderRadius: borderRadius.full,
-    overflow: 'hidden',
+    flexDirection: 'row',
   },
   progressBarFill: {
-    height: '100%',
+    height: 8,
     borderRadius: borderRadius.full,
   },
   quickStatsContainer: {

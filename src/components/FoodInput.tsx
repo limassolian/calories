@@ -42,7 +42,7 @@ export const FoodInput: React.FC<FoodInputProps> = ({
         <Text style={styles.remainingLabel}> left</Text>
       </View>
 
-      <View style={[styles.inputContainer, isFocused && styles.inputContainerFocused]}>
+      <View style={[styles.inputContainer, isFocused ? styles.inputContainerFocused : null]}>
         <TextInput
           style={styles.input}
           value={text}
@@ -58,7 +58,7 @@ export const FoodInput: React.FC<FoodInputProps> = ({
 
         <View style={styles.buttonsContainer}>
           <TouchableOpacity
-            style={[styles.voiceButton, isVoiceActive && styles.voiceButtonActive]}
+            style={[styles.voiceButton, isVoiceActive ? styles.voiceButtonActive : null]}
             onPress={onVoicePress}
             activeOpacity={0.7}
           >
@@ -70,7 +70,7 @@ export const FoodInput: React.FC<FoodInputProps> = ({
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.addButton, !text.trim() && styles.addButtonDisabled]}
+            style={[styles.addButton, !text.trim() ? styles.addButtonDisabled : null]}
             onPress={handleSubmit}
             disabled={!text.trim()}
             activeOpacity={0.7}
