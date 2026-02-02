@@ -124,7 +124,7 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.lg,
     padding: spacing.lg,
     marginBottom: spacing.md,
-    ...shadows.md,
+    
   },
   content: {
     flexDirection: 'row',

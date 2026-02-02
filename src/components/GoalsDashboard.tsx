@@ -146,7 +146,7 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.xl,
     padding: spacing.lg,
     margin: spacing.lg,
-    ...shadows.md,
+    
   },
   title: {
     fontSize: typography.sizes.xl,

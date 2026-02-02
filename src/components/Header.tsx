@@ -57,7 +57,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     borderRadius: borderRadius.full,
-    ...shadows.sm,
+    
   },
   title: {
     fontSize: typography.sizes.md,
@@ -76,7 +76,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     borderRadius: borderRadius.full,
     marginRight: spacing.sm,
-    ...shadows.sm,
+    
   },
   caloriesIcon: {
     fontSize: typography.sizes.md,
@@ -94,7 +94,7 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.full,
     justifyContent: 'center',
     alignItems: 'center',
-    ...shadows.sm,
+    
   },
   settingsIcon: {
     fontSize: typography.sizes.lg,

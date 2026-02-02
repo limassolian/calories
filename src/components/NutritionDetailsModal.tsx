@@ -293,7 +293,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: borderRadius.xl,
     borderTopRightRadius: borderRadius.xl,
     maxHeight: '90%',
-    ...shadows.lg,
+    
   },
   header: {
     flexDirection: 'row',

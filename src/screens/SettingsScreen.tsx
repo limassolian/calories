@@ -245,7 +245,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     justifyContent: 'center',
     alignItems: 'center',
-    ...shadows.sm,
+    
   },
   backIcon: {
     fontSize: typography.sizes.xl,
@@ -281,7 +281,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderRadius: borderRadius.xl,
     padding: spacing.lg,
-    ...shadows.md,
+    
   },
   goalInputContainer: {
     flexDirection: 'row',
@@ -336,7 +336,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderRadius: borderRadius.xl,
     padding: spacing.lg,
-    ...shadows.md,
+    
   },
   appName: {
     fontSize: typography.sizes.xl,
@@ -376,7 +376,7 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.lg,
     paddingVertical: spacing.md,
     alignItems: 'center',
-    ...shadows.md,
+    
   },
   saveButtonText: {
     fontSize: typography.sizes.md,

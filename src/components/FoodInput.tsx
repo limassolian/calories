@@ -125,7 +125,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     borderWidth: 1,
     borderColor: colors.border,
-    ...shadows.md,
+    
   },
   inputContainerFocused: {
     borderColor: colors.primary,
