@@ -10,12 +10,19 @@ import {
   Image,
   Alert,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 
-// Simple types
+// ============ CONFIGURATION ============
+// Set your Claude API key here or use environment variable
+const CLAUDE_API_KEY = process.env.EXPO_PUBLIC_CLAUDE_API_KEY || '';
+// ========================================
+
+// Types
 interface FoodEntry {
   id: string;
   description: string;
@@ -24,6 +31,8 @@ interface FoodEntry {
   carbs: number;
   fat: number;
   imageUri?: string;
+  aiAnalysis?: string;
+  isAnalyzing?: boolean;
 }
 
 interface Goals {
@@ -33,6 +42,15 @@ interface Goals {
   fat: number;
 }
 
+interface NutritionResult {
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  description: string;
+  analysis: string;
+}
+
 const DEFAULT_GOALS: Goals = {
   calories: 2000,
   protein: 120,
@@ -40,43 +58,157 @@ const DEFAULT_GOALS: Goals = {
   fat: 65,
 };
 
-// Simple food estimator (mock AI)
-const estimateNutrition = (description: string): Omit<FoodEntry, 'id' | 'description' | 'imageUri'> => {
+// AI Service for nutrition analysis
+const analyzeWithAI = async (
+  description: string,
+  imageBase64?: string
+): Promise<NutritionResult> => {
+  // If no API key, use fallback estimation
+  if (!CLAUDE_API_KEY) {
+    return fallbackEstimation(description);
+  }
+
+  try {
+    const messages: any[] = [];
+
+    const systemPrompt = `You are a nutrition expert AI. Analyze the food described or shown and provide accurate nutritional estimates.
+
+IMPORTANT: Respond ONLY with a valid JSON object in this exact format, no other text:
+{
+  "calories": <number>,
+  "protein": <number in grams>,
+  "carbs": <number in grams>,
+  "fat": <number in grams>,
+  "description": "<brief description of the food>",
+  "analysis": "<1-2 sentence explanation of your estimate>"
+}
+
+Guidelines:
+- Use standard portion sizes if not specified
+- For restaurant food, use typical restaurant portions
+- Be conservative with estimates
+- Round to whole numbers`;
+
+    let userContent: any[] = [];
+
+    if (imageBase64) {
+      userContent.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/jpeg",
+          data: imageBase64,
+        },
+      });
+      userContent.push({
+        type: "text",
+        text: description
+          ? `Analyze this food image. Additional context: "${description}". Provide nutritional information.`
+          : "Analyze this food image and provide nutritional information.",
+      });
+    } else {
+      userContent.push({
+        type: "text",
+        text: `Analyze this food and provide nutritional information: "${description}"`,
+      });
+    }
+
+    messages.push({ role: "user", content: userContent });
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': CLAUDE_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1024,
+        system: systemPrompt,
+        messages,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const content = data.content[0].text;
+
+    // Parse JSON response
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const result = JSON.parse(jsonMatch[0]);
+      return {
+        calories: result.calories || 300,
+        protein: result.protein || 15,
+        carbs: result.carbs || 35,
+        fat: result.fat || 12,
+        description: result.description || description,
+        analysis: result.analysis || 'AI analysis completed.',
+      };
+    }
+
+    throw new Error('Invalid response format');
+  } catch (error) {
+    console.error('AI analysis error:', error);
+    return fallbackEstimation(description);
+  }
+};
+
+// Fallback when API is unavailable
+const fallbackEstimation = (description: string): NutritionResult => {
   const lower = description.toLowerCase();
 
-  if (lower.includes('burger')) {
-    return { calories: 540, protein: 25, carbs: 45, fat: 29 };
-  }
-  if (lower.includes('ramen') || lower.includes('noodle')) {
-    return { calories: 450, protein: 12, carbs: 65, fat: 15 };
-  }
-  if (lower.includes('salad')) {
-    return { calories: 250, protein: 15, carbs: 20, fat: 12 };
-  }
-  if (lower.includes('pizza')) {
-    return { calories: 285, protein: 12, carbs: 36, fat: 10 };
-  }
-  if (lower.includes('chicken')) {
-    return { calories: 335, protein: 38, carbs: 0, fat: 8 };
-  }
-  if (lower.includes('rice')) {
-    return { calories: 206, protein: 4, carbs: 45, fat: 0 };
-  }
-  if (lower.includes('egg')) {
-    return { calories: 155, protein: 13, carbs: 1, fat: 11 };
-  }
-  if (lower.includes('sandwich')) {
-    return { calories: 350, protein: 18, carbs: 40, fat: 12 };
-  }
-  if (lower.includes('coffee') || lower.includes('latte')) {
-    return { calories: 120, protein: 6, carbs: 12, fat: 5 };
-  }
-  if (lower.includes('smoothie')) {
-    return { calories: 280, protein: 8, carbs: 52, fat: 4 };
+  const foodDatabase: Record<string, Omit<NutritionResult, 'description' | 'analysis'>> = {
+    'burger': { calories: 540, protein: 25, carbs: 45, fat: 29 },
+    'ramen': { calories: 450, protein: 12, carbs: 65, fat: 15 },
+    'noodle': { calories: 450, protein: 12, carbs: 65, fat: 15 },
+    'salad': { calories: 250, protein: 15, carbs: 20, fat: 12 },
+    'pizza': { calories: 285, protein: 12, carbs: 36, fat: 10 },
+    'chicken': { calories: 335, protein: 38, carbs: 0, fat: 8 },
+    'rice': { calories: 206, protein: 4, carbs: 45, fat: 0 },
+    'egg': { calories: 155, protein: 13, carbs: 1, fat: 11 },
+    'sandwich': { calories: 350, protein: 18, carbs: 40, fat: 12 },
+    'coffee': { calories: 120, protein: 6, carbs: 12, fat: 5 },
+    'latte': { calories: 120, protein: 6, carbs: 12, fat: 5 },
+    'smoothie': { calories: 280, protein: 8, carbs: 52, fat: 4 },
+    'steak': { calories: 450, protein: 42, carbs: 0, fat: 30 },
+    'fish': { calories: 200, protein: 25, carbs: 0, fat: 10 },
+    'pasta': { calories: 400, protein: 12, carbs: 70, fat: 8 },
+    'sushi': { calories: 300, protein: 15, carbs: 40, fat: 8 },
+    'tacos': { calories: 380, protein: 18, carbs: 35, fat: 18 },
+    'burrito': { calories: 550, protein: 22, carbs: 60, fat: 22 },
+  };
+
+  for (const [food, nutrition] of Object.entries(foodDatabase)) {
+    if (lower.includes(food)) {
+      return {
+        ...nutrition,
+        description,
+        analysis: `Estimated based on typical ${food} nutritional values.`,
+      };
+    }
   }
 
-  // Default estimate
-  return { calories: 300, protein: 15, carbs: 35, fat: 12 };
+  return {
+    calories: 300,
+    protein: 15,
+    carbs: 35,
+    fat: 12,
+    description,
+    analysis: 'Using default estimate. Add Claude API key for accurate AI analysis.',
+  };
+};
+
+// Convert image to base64
+const imageToBase64 = async (uri: string): Promise<string> => {
+  const base64 = await FileSystem.readAsStringAsync(uri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  return base64;
 };
 
 export default function App() {
@@ -85,6 +217,8 @@ export default function App() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [showImageModal, setShowImageModal] = useState(false);
   const [selectedEntry, setSelectedEntry] = useState<FoodEntry | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const goals = DEFAULT_GOALS;
 
   const totals = entries.reduce(
@@ -110,7 +244,7 @@ export default function App() {
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [4, 3],
-      quality: 0.8,
+      quality: 0.7,
     });
 
     if (!result.canceled && result.assets[0]) {
@@ -128,7 +262,7 @@ export default function App() {
     const result = await ImagePicker.launchCameraAsync({
       allowsEditing: true,
       aspect: [4, 3],
-      quality: 0.8,
+      quality: 0.7,
     });
 
     if (!result.canceled && result.assets[0]) {
@@ -136,22 +270,41 @@ export default function App() {
     }
   };
 
-  const addEntry = useCallback(() => {
+  const addEntry = useCallback(async () => {
     if (!inputText.trim() && !selectedImage) return;
 
-    const description = inputText.trim() || 'Meal from photo';
-    const nutrition = estimateNutrition(description);
-    const newEntry: FoodEntry = {
-      id: Date.now().toString(),
-      description,
-      ...nutrition,
-      imageUri: selectedImage || undefined,
-    };
+    setIsAnalyzing(true);
 
-    setEntries(prev => [newEntry, ...prev]);
-    setInputText('');
-    setSelectedImage(null);
-    Keyboard.dismiss();
+    try {
+      let imageBase64: string | undefined;
+
+      if (selectedImage) {
+        imageBase64 = await imageToBase64(selectedImage);
+      }
+
+      const description = inputText.trim() || 'Food from photo';
+      const result = await analyzeWithAI(description, imageBase64);
+
+      const newEntry: FoodEntry = {
+        id: Date.now().toString(),
+        description: result.description,
+        calories: result.calories,
+        protein: result.protein,
+        carbs: result.carbs,
+        fat: result.fat,
+        imageUri: selectedImage || undefined,
+        aiAnalysis: result.analysis,
+      };
+
+      setEntries(prev => [newEntry, ...prev]);
+      setInputText('');
+      setSelectedImage(null);
+      Keyboard.dismiss();
+    } catch (error) {
+      Alert.alert('Error', 'Failed to analyze food. Please try again.');
+    } finally {
+      setIsAnalyzing(false);
+    }
   }, [inputText, selectedImage]);
 
   const deleteEntry = useCallback((id: string) => {
@@ -182,7 +335,7 @@ export default function App() {
         <View style={styles.progressHeader}>
           <Text style={styles.progressLabel}>{label}</Text>
           <Text style={[styles.progressValue, isOver ? styles.progressValueOver : null]}>
-            {current} / {goal}
+            {Math.round(current)} / {goal}
           </Text>
         </View>
         <View style={styles.progressBarBg}>
@@ -206,10 +359,8 @@ export default function App() {
       key={item.id}
       style={styles.entryCard}
       onPress={() => {
-        if (item.imageUri) {
-          setSelectedEntry(item);
-          setShowImageModal(true);
-        }
+        setSelectedEntry(item);
+        setShowImageModal(true);
       }}
       onLongPress={() => deleteEntry(item.id)}
     >
@@ -225,10 +376,17 @@ export default function App() {
           <Text style={styles.entryMacros}>
             P: {item.protein}g  C: {item.carbs}g  F: {item.fat}g
           </Text>
+          {item.aiAnalysis && (
+            <Text style={styles.entryAnalysis} numberOfLines={1}>
+              🤖 {item.aiAnalysis}
+            </Text>
+          )}
         </View>
       </View>
     </TouchableOpacity>
   );
+
+  const hasApiKey = Boolean(CLAUDE_API_KEY);
 
   return (
     <SafeAreaProvider>
@@ -237,7 +395,14 @@ export default function App() {
 
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Today</Text>
+          <View>
+            <Text style={styles.headerTitle}>Today</Text>
+            {!hasApiKey && (
+              <TouchableOpacity onPress={() => setShowApiKeyModal(true)}>
+                <Text style={styles.apiKeyHint}>⚠️ Add API key for AI</Text>
+              </TouchableOpacity>
+            )}
+          </View>
           <View style={styles.caloriesBadge}>
             <Text style={styles.caloriesIcon}>🔥</Text>
             <Text style={styles.caloriesRemaining}>{remainingCalories}</Text>
@@ -254,12 +419,22 @@ export default function App() {
             {renderProgressBar('Fat', totals.fat, goals.fat, '#26DE81')}
           </View>
 
+          {/* AI Info Card */}
+          <View style={styles.aiInfoCard}>
+            <Text style={styles.aiInfoTitle}>🤖 AI-Powered Analysis</Text>
+            <Text style={styles.aiInfoText}>
+              {hasApiKey
+                ? "Claude AI analyzes your food photos and descriptions for accurate nutrition data."
+                : "Add your Claude API key to enable AI-powered food recognition and calorie estimation."}
+            </Text>
+          </View>
+
           {/* Entries */}
           {entries.length > 0 && (
             <View style={styles.entriesSection}>
               <Text style={styles.sectionTitle}>Today's Log</Text>
               {entries.map(item => renderEntry(item))}
-              <Text style={styles.hintText}>Long press to delete</Text>
+              <Text style={styles.hintText}>Tap for details • Long press to delete</Text>
             </View>
           )}
 
@@ -268,7 +443,7 @@ export default function App() {
               <Text style={styles.emptyIcon}>🍽️</Text>
               <Text style={styles.emptyTitle}>No entries yet</Text>
               <Text style={styles.emptySubtitle}>
-                Type what you ate or take a photo
+                Take a photo or describe what you ate
               </Text>
             </View>
           )}
@@ -286,11 +461,17 @@ export default function App() {
 
         {/* Input */}
         <View style={styles.inputSection}>
+          {isAnalyzing && (
+            <View style={styles.analyzingBanner}>
+              <ActivityIndicator size="small" color="#FF8C42" />
+              <Text style={styles.analyzingText}>🤖 AI is analyzing your food...</Text>
+            </View>
+          )}
           <View style={styles.inputRow}>
-            <TouchableOpacity style={styles.iconButton} onPress={takePhoto}>
+            <TouchableOpacity style={styles.iconButton} onPress={takePhoto} disabled={isAnalyzing}>
               <Text style={styles.iconButtonText}>📷</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.iconButton} onPress={pickImage}>
+            <TouchableOpacity style={styles.iconButton} onPress={pickImage} disabled={isAnalyzing}>
               <Text style={styles.iconButtonText}>🖼️</Text>
             </TouchableOpacity>
             <TextInput
@@ -301,21 +482,26 @@ export default function App() {
               placeholderTextColor="#999"
               onSubmitEditing={addEntry}
               returnKeyType="done"
+              editable={!isAnalyzing}
             />
             <TouchableOpacity
               style={[
                 styles.addButton,
-                (!inputText.trim() && !selectedImage) ? styles.addButtonDisabled : null
+                ((!inputText.trim() && !selectedImage) || isAnalyzing) ? styles.addButtonDisabled : null
               ]}
               onPress={addEntry}
-              disabled={!inputText.trim() && !selectedImage}
+              disabled={(!inputText.trim() && !selectedImage) || isAnalyzing}
             >
-              <Text style={styles.addButtonText}>+</Text>
+              {isAnalyzing ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <Text style={styles.addButtonText}>+</Text>
+              )}
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Image Detail Modal */}
+        {/* Entry Detail Modal */}
         <Modal
           visible={showImageModal}
           transparent
@@ -342,6 +528,12 @@ export default function App() {
                   <Text style={styles.modalMacros}>
                     Protein: {selectedEntry.protein}g • Carbs: {selectedEntry.carbs}g • Fat: {selectedEntry.fat}g
                   </Text>
+                  {selectedEntry.aiAnalysis && (
+                    <View style={styles.modalAnalysisBox}>
+                      <Text style={styles.modalAnalysisTitle}>🤖 AI Analysis</Text>
+                      <Text style={styles.modalAnalysisText}>{selectedEntry.aiAnalysis}</Text>
+                    </View>
+                  )}
                 </View>
               )}
               <TouchableOpacity
@@ -349,6 +541,37 @@ export default function App() {
                 onPress={() => setShowImageModal(false)}
               >
                 <Text style={styles.modalCloseText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
+        {/* API Key Info Modal */}
+        <Modal
+          visible={showApiKeyModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowApiKeyModal(false)}
+        >
+          <TouchableOpacity
+            style={styles.modalOverlay}
+            activeOpacity={1}
+            onPress={() => setShowApiKeyModal(false)}
+          >
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>🔑 Add Claude API Key</Text>
+              <Text style={styles.apiKeyInstructions}>
+                To enable AI-powered food recognition:{'\n\n'}
+                1. Get an API key from console.anthropic.com{'\n\n'}
+                2. Create a file called .env in your project:{'\n\n'}
+                EXPO_PUBLIC_CLAUDE_API_KEY=your_key_here{'\n\n'}
+                3. Restart the app
+              </Text>
+              <TouchableOpacity
+                style={styles.modalCloseButton}
+                onPress={() => setShowApiKeyModal(false)}
+              >
+                <Text style={styles.modalCloseText}>Got it</Text>
               </TouchableOpacity>
             </View>
           </TouchableOpacity>
@@ -375,6 +598,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1A1A1A',
   },
+  apiKeyHint: {
+    fontSize: 12,
+    color: '#FF8C42',
+    marginTop: 2,
+  },
   caloriesBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -400,13 +628,30 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF',
     borderRadius: 16,
     padding: 16,
-    marginBottom: 20,
+    marginBottom: 16,
   },
   goalsTitle: {
     fontSize: 18,
     fontWeight: '700',
     color: '#1A1A1A',
     marginBottom: 16,
+  },
+  aiInfoCard: {
+    backgroundColor: '#E8F4FD',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+  },
+  aiInfoTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1A1A1A',
+    marginBottom: 4,
+  },
+  aiInfoText: {
+    fontSize: 13,
+    color: '#555',
+    lineHeight: 18,
   },
   progressItem: {
     marginBottom: 12,
@@ -494,6 +739,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
   },
+  entryAnalysis: {
+    fontSize: 11,
+    color: '#888',
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
   emptyState: {
     alignItems: 'center',
     paddingVertical: 40,
@@ -543,6 +794,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 12,
     backgroundColor: '#FDF6E9',
+  },
+  analyzingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFF5EB',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginBottom: 10,
+  },
+  analyzingText: {
+    fontSize: 13,
+    color: '#FF8C42',
+    marginLeft: 8,
+    fontWeight: '500',
   },
   inputRow: {
     flexDirection: 'row',
@@ -601,7 +868,7 @@ const styles = StyleSheet.create({
   },
   modalImage: {
     width: '100%',
-    height: 250,
+    height: 200,
     borderRadius: 12,
     marginBottom: 16,
   },
@@ -623,6 +890,23 @@ const styles = StyleSheet.create({
   modalMacros: {
     fontSize: 14,
     color: '#666',
+    marginBottom: 12,
+  },
+  modalAnalysisBox: {
+    backgroundColor: '#F5F5F5',
+    borderRadius: 8,
+    padding: 12,
+  },
+  modalAnalysisTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1A1A1A',
+    marginBottom: 4,
+  },
+  modalAnalysisText: {
+    fontSize: 13,
+    color: '#555',
+    lineHeight: 18,
   },
   modalCloseButton: {
     backgroundColor: '#F0F0F0',
@@ -634,5 +918,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#1A1A1A',
+  },
+  apiKeyInstructions: {
+    fontSize: 14,
+    color: '#555',
+    lineHeight: 22,
+    marginVertical: 16,
   },
 });
