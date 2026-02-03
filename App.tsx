@@ -1102,6 +1102,12 @@ const EntryDetail: React.FC<EntryDetailProps> = ({ entry, onClose, onUpdate, onD
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showFixModal, setShowFixModal] = useState(false);
   const [correctionText, setCorrectionText] = useState('');
+  const [showIngredientEdit, setShowIngredientEdit] = useState(false);
+  const [selectedIngredientIndex, setSelectedIngredientIndex] = useState<number | null>(null);
+  const [ingredientServings, setIngredientServings] = useState(1);
+  const [ingredientMeasurement, setIngredientMeasurement] = useState('serving');
+  const [showAddIngredient, setShowAddIngredient] = useState(false);
+  const [newIngredientName, setNewIngredientName] = useState('');
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(50)).current;
 
@@ -1160,6 +1166,110 @@ const EntryDetail: React.FC<EntryDetailProps> = ({ entry, onClose, onUpdate, onD
     onDelete(entry.id);
     onClose();
   };
+
+  const openIngredientEdit = (index: number) => {
+    const ingredient = editedEntry.ingredients[index];
+    setSelectedIngredientIndex(index);
+    setIngredientServings(1);
+    setIngredientMeasurement(ingredient.serving?.includes('g') ? 'g' : ingredient.serving?.includes('oz') ? 'oz' : ingredient.serving?.includes('cup') ? 'cup' : 'serving');
+    setShowIngredientEdit(true);
+  };
+
+  const updateIngredientServings = (newServings: number) => {
+    if (selectedIngredientIndex === null) return;
+    const clampedServings = Math.max(0.25, Math.min(10, newServings));
+    setIngredientServings(clampedServings);
+  };
+
+  const saveIngredientEdit = () => {
+    if (selectedIngredientIndex === null) return;
+
+    const originalIngredient = entry.ingredients[selectedIngredientIndex];
+    const updatedIngredients = [...editedEntry.ingredients];
+
+    // Update the ingredient with new servings
+    updatedIngredients[selectedIngredientIndex] = {
+      ...originalIngredient,
+      calories: Math.round(originalIngredient.calories * ingredientServings),
+      protein: Math.round(originalIngredient.protein * ingredientServings),
+      carbs: Math.round(originalIngredient.carbs * ingredientServings),
+      fat: Math.round(originalIngredient.fat * ingredientServings),
+      serving: `${ingredientServings === 0.5 ? '½' : ingredientServings === 0.25 ? '¼' : ingredientServings} ${ingredientMeasurement}`,
+    };
+
+    // Recalculate totals
+    const newCalories = updatedIngredients.reduce((sum, ing) => sum + ing.calories, 0);
+    const newProtein = updatedIngredients.reduce((sum, ing) => sum + ing.protein, 0);
+    const newCarbs = updatedIngredients.reduce((sum, ing) => sum + ing.carbs, 0);
+    const newFat = updatedIngredients.reduce((sum, ing) => sum + ing.fat, 0);
+
+    setEditedEntry({
+      ...editedEntry,
+      ingredients: updatedIngredients,
+      calories: newCalories,
+      protein: newProtein,
+      carbs: newCarbs,
+      fat: newFat,
+    });
+
+    setShowIngredientEdit(false);
+    setSelectedIngredientIndex(null);
+  };
+
+  const deleteIngredient = () => {
+    if (selectedIngredientIndex === null) return;
+
+    const updatedIngredients = editedEntry.ingredients.filter((_, idx) => idx !== selectedIngredientIndex);
+
+    // Recalculate totals
+    const newCalories = updatedIngredients.reduce((sum, ing) => sum + ing.calories, 0);
+    const newProtein = updatedIngredients.reduce((sum, ing) => sum + ing.protein, 0);
+    const newCarbs = updatedIngredients.reduce((sum, ing) => sum + ing.carbs, 0);
+    const newFat = updatedIngredients.reduce((sum, ing) => sum + ing.fat, 0);
+
+    setEditedEntry({
+      ...editedEntry,
+      ingredients: updatedIngredients,
+      calories: newCalories || 0,
+      protein: newProtein || 0,
+      carbs: newCarbs || 0,
+      fat: newFat || 0,
+    });
+
+    setShowIngredientEdit(false);
+    setSelectedIngredientIndex(null);
+  };
+
+  const addNewIngredient = async () => {
+    if (!newIngredientName.trim()) return;
+
+    // Simple estimation for new ingredient
+    const newIngredient: Ingredient = {
+      name: newIngredientName.trim(),
+      calories: 100,
+      protein: 5,
+      carbs: 10,
+      fat: 5,
+      serving: '1 serving',
+    };
+
+    const updatedIngredients = [...editedEntry.ingredients, newIngredient];
+
+    setEditedEntry({
+      ...editedEntry,
+      ingredients: updatedIngredients,
+      calories: editedEntry.calories + newIngredient.calories,
+      protein: editedEntry.protein + newIngredient.protein,
+      carbs: editedEntry.carbs + newIngredient.carbs,
+      fat: editedEntry.fat + newIngredient.fat,
+    });
+
+    setNewIngredientName('');
+    setShowAddIngredient(false);
+  };
+
+  const selectedIngredient = selectedIngredientIndex !== null ? editedEntry.ingredients[selectedIngredientIndex] : null;
+  const originalIngredient = selectedIngredientIndex !== null ? entry.ingredients[selectedIngredientIndex] : null;
 
   const totalCalories = Math.round(editedEntry.calories);
   const totalProtein = Math.round(editedEntry.protein);
@@ -1264,16 +1374,18 @@ const EntryDetail: React.FC<EntryDetailProps> = ({ entry, onClose, onUpdate, onD
           <View style={detailStyles.ingredientsSection}>
             <View style={detailStyles.ingredientsHeader}>
               <Text style={detailStyles.ingredientsTitle}>Ingredients</Text>
+              <TouchableOpacity onPress={() => setShowAddIngredient(true)}>
+                <Text style={detailStyles.addMoreText}>+ Add More</Text>
+              </TouchableOpacity>
             </View>
 
             {editedEntry.ingredients.map((ingredient, index) => (
-              <View key={index} style={detailStyles.ingredientRow}>
+              <TouchableOpacity key={index} style={detailStyles.ingredientRow} onPress={() => openIngredientEdit(index)}>
                 <View style={detailStyles.ingredientInfo}>
-                  <Text style={detailStyles.ingredientName}>{ingredient.name}</Text>
-                  <Text style={detailStyles.ingredientCal}>{Math.round(ingredient.calories * editedEntry.servings)} cal</Text>
+                  <Text style={detailStyles.ingredientName}>{ingredient.name} <Text style={detailStyles.ingredientCal}>• {Math.round(ingredient.calories)} cal</Text></Text>
                 </View>
                 <Text style={detailStyles.ingredientServing}>{ingredient.serving}</Text>
-              </View>
+              </TouchableOpacity>
             ))}
 
             {editedEntry.ingredients.length === 0 && (
@@ -1338,7 +1450,7 @@ const EntryDetail: React.FC<EntryDetailProps> = ({ entry, onClose, onUpdate, onD
 
       {/* Fix Issue Modal */}
       <Modal visible={showFixModal} transparent animationType="fade">
-        <KeyboardAvoidingView behavior="padding" style={detailStyles.modalOverlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={detailStyles.modalOverlay}>
           <View style={detailStyles.fixModalContent}>
             <View style={detailStyles.fixModalHeader}>
               <Ionicons name="sparkles" size={24} color="#FF8C42" />
@@ -1366,6 +1478,153 @@ const EntryDetail: React.FC<EntryDetailProps> = ({ entry, onClose, onUpdate, onD
               <TouchableOpacity style={detailStyles.fixModalSubmit} onPress={submitCorrection}>
                 <Ionicons name="checkmark" size={18} color="#FFF" />
                 <Text style={detailStyles.fixModalSubmitText}>Apply Fix</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Ingredient Edit Modal */}
+      <Modal visible={showIngredientEdit} transparent animationType="slide">
+        <View style={detailStyles.ingredientEditContainer}>
+          <View style={detailStyles.ingredientEditHeader}>
+            <TouchableOpacity style={detailStyles.ingredientEditBack} onPress={() => setShowIngredientEdit(false)}>
+              <Ionicons name="arrow-back" size={24} color="#1A1A1A" />
+            </TouchableOpacity>
+            <Text style={detailStyles.ingredientEditTitle}>Edit Ingredient</Text>
+            <TouchableOpacity style={detailStyles.ingredientEditDelete} onPress={deleteIngredient}>
+              <Ionicons name="trash-outline" size={22} color="#FF4757" />
+            </TouchableOpacity>
+          </View>
+
+          {selectedIngredient && originalIngredient && (
+            <ScrollView style={detailStyles.ingredientEditContent}>
+              <Text style={detailStyles.ingredientEditName}>{selectedIngredient.name}</Text>
+
+              <Text style={detailStyles.ingredientEditLabel}>Measurement</Text>
+              <View style={detailStyles.measurementOptions}>
+                {['serving', 'g', 'oz', 'cup'].map((measure) => (
+                  <TouchableOpacity
+                    key={measure}
+                    style={[
+                      detailStyles.measurementBtn,
+                      ingredientMeasurement === measure && detailStyles.measurementBtnActive
+                    ]}
+                    onPress={() => setIngredientMeasurement(measure)}
+                  >
+                    <Text style={[
+                      detailStyles.measurementBtnText,
+                      ingredientMeasurement === measure && detailStyles.measurementBtnTextActive
+                    ]}>
+                      {measure.charAt(0).toUpperCase() + measure.slice(1)}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={detailStyles.ingredientEditLabel}>Number of Servings</Text>
+              <View style={detailStyles.servingsRow}>
+                <Text style={detailStyles.servingsLabel}>Number of Servings</Text>
+                <View style={detailStyles.servingsControlLarge}>
+                  <TouchableOpacity
+                    style={detailStyles.servingBtnLarge}
+                    onPress={() => updateIngredientServings(ingredientServings - 0.25)}
+                  >
+                    <Ionicons name="remove" size={20} color="#1A1A1A" />
+                  </TouchableOpacity>
+                  <Text style={detailStyles.servingsValueLarge}>
+                    {ingredientServings === 0.5 ? '½' : ingredientServings === 0.25 ? '¼' : ingredientServings === 0.75 ? '¾' : ingredientServings}
+                  </Text>
+                  <TouchableOpacity style={detailStyles.editServingsBtn}>
+                    <Ionicons name="pencil" size={14} color="#666" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={detailStyles.servingBtnLarge}
+                    onPress={() => updateIngredientServings(ingredientServings + 0.25)}
+                  >
+                    <Ionicons name="add" size={20} color="#1A1A1A" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Nutrition Preview */}
+              <View style={detailStyles.nutritionPreview}>
+                <View style={detailStyles.nutritionPreviewCard}>
+                  <View style={detailStyles.nutritionPreviewIcon}>
+                    <Ionicons name="flame-outline" size={24} color="#FF8C42" />
+                  </View>
+                  <View>
+                    <Text style={detailStyles.nutritionPreviewLabel}>Calories</Text>
+                    <Text style={detailStyles.nutritionPreviewValue}>
+                      {Math.round(originalIngredient.calories * ingredientServings)}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={detailStyles.nutritionPreviewRow}>
+                  <View style={detailStyles.nutritionPreviewItem}>
+                    <View style={[detailStyles.nutritionPreviewDot, { backgroundColor: '#FF6B6B' }]} />
+                    <Text style={detailStyles.nutritionPreviewItemLabel}>Protein</Text>
+                    <Text style={detailStyles.nutritionPreviewItemValue}>
+                      {Math.round(originalIngredient.protein * ingredientServings)}g
+                    </Text>
+                  </View>
+                  <View style={detailStyles.nutritionPreviewItem}>
+                    <View style={[detailStyles.nutritionPreviewDot, { backgroundColor: '#FF9F43' }]} />
+                    <Text style={detailStyles.nutritionPreviewItemLabel}>Carbs</Text>
+                    <Text style={detailStyles.nutritionPreviewItemValue}>
+                      {Math.round(originalIngredient.carbs * ingredientServings)}g
+                    </Text>
+                  </View>
+                  <View style={detailStyles.nutritionPreviewItem}>
+                    <View style={[detailStyles.nutritionPreviewDot, { backgroundColor: '#45B7D1' }]} />
+                    <Text style={detailStyles.nutritionPreviewItemLabel}>Fats</Text>
+                    <Text style={detailStyles.nutritionPreviewItemValue}>
+                      {Math.round(originalIngredient.fat * ingredientServings)}g
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </ScrollView>
+          )}
+
+          <View style={detailStyles.ingredientEditBottom}>
+            <TouchableOpacity style={detailStyles.ingredientEditDoneBtn} onPress={saveIngredientEdit}>
+              <Text style={detailStyles.ingredientEditDoneBtnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Add Ingredient Modal */}
+      <Modal visible={showAddIngredient} transparent animationType="fade">
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={detailStyles.modalOverlay}>
+          <View style={detailStyles.fixModalContent}>
+            <View style={detailStyles.fixModalHeader}>
+              <Ionicons name="add-circle" size={24} color="#FF8C42" />
+              <Text style={detailStyles.fixModalTitle}>Add Ingredient</Text>
+            </View>
+            <Text style={detailStyles.fixModalSubtitle}>
+              Enter the name of the ingredient to add
+            </Text>
+            <TextInput
+              style={detailStyles.fixModalInput}
+              placeholder="e.g., Rice, Chicken, Avocado..."
+              placeholderTextColor="#999"
+              value={newIngredientName}
+              onChangeText={setNewIngredientName}
+              autoFocus
+            />
+            <View style={detailStyles.modalButtons}>
+              <TouchableOpacity
+                style={detailStyles.modalCancel}
+                onPress={() => { setShowAddIngredient(false); setNewIngredientName(''); }}
+              >
+                <Text style={detailStyles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={detailStyles.fixModalSubmit} onPress={addNewIngredient}>
+                <Ionicons name="add" size={18} color="#FFF" />
+                <Text style={detailStyles.fixModalSubmitText}>Add</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1437,6 +1696,39 @@ const detailStyles = StyleSheet.create({
   fixModalInput: { backgroundColor: '#F5F5F5', borderRadius: 12, padding: 14, fontSize: 16, color: '#1A1A1A', minHeight: 80, textAlignVertical: 'top', marginBottom: 20 },
   fixModalSubmit: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', paddingVertical: 12, backgroundColor: '#FF8C42', borderRadius: 10 },
   fixModalSubmitText: { fontSize: 16, fontWeight: '600', color: '#FFF', marginLeft: 6 },
+  addMoreText: { fontSize: 14, fontWeight: '600', color: '#666' },
+  ingredientEditContainer: { flex: 1, backgroundColor: '#FFF' },
+  ingredientEditHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 60, paddingHorizontal: 16, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' },
+  ingredientEditBack: { width: 44, height: 44, justifyContent: 'center', alignItems: 'center' },
+  ingredientEditTitle: { fontSize: 17, fontWeight: '600', color: '#1A1A1A' },
+  ingredientEditDelete: { width: 44, height: 44, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFF5F5', borderRadius: 22 },
+  ingredientEditContent: { flex: 1, padding: 20 },
+  ingredientEditName: { fontSize: 28, fontWeight: '700', color: '#1A1A1A', marginBottom: 24 },
+  ingredientEditLabel: { fontSize: 16, fontWeight: '600', color: '#1A1A1A', marginBottom: 12 },
+  measurementOptions: { flexDirection: 'row', marginBottom: 24 },
+  measurementBtn: { paddingVertical: 12, paddingHorizontal: 20, borderRadius: 24, backgroundColor: '#F5F5F5', marginRight: 8 },
+  measurementBtnActive: { backgroundColor: '#1A1A1A' },
+  measurementBtnText: { fontSize: 14, fontWeight: '600', color: '#666' },
+  measurementBtnTextActive: { color: '#FFF' },
+  servingsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 },
+  servingsLabel: { fontSize: 16, fontWeight: '600', color: '#1A1A1A' },
+  servingsControlLarge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F5F5F5', borderRadius: 24, paddingHorizontal: 4, paddingVertical: 4 },
+  servingBtnLarge: { width: 36, height: 36, justifyContent: 'center', alignItems: 'center' },
+  servingsValueLarge: { fontSize: 16, fontWeight: '600', color: '#1A1A1A', minWidth: 40, textAlign: 'center' },
+  editServingsBtn: { marginLeft: 4 },
+  nutritionPreview: { backgroundColor: '#F9F9F9', borderRadius: 16, padding: 16, marginTop: 20 },
+  nutritionPreviewCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 12, padding: 16, marginBottom: 16 },
+  nutritionPreviewIcon: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#FFF5EB', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  nutritionPreviewLabel: { fontSize: 14, color: '#666' },
+  nutritionPreviewValue: { fontSize: 28, fontWeight: '700', color: '#1A1A1A' },
+  nutritionPreviewRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  nutritionPreviewItem: { flex: 1, alignItems: 'center', backgroundColor: '#FFF', borderRadius: 12, padding: 12, marginHorizontal: 4 },
+  nutritionPreviewDot: { width: 8, height: 8, borderRadius: 4, marginBottom: 8 },
+  nutritionPreviewItemLabel: { fontSize: 12, color: '#666', marginBottom: 4 },
+  nutritionPreviewItemValue: { fontSize: 18, fontWeight: '700', color: '#1A1A1A' },
+  ingredientEditBottom: { padding: 20, paddingBottom: 40, borderTopWidth: 1, borderTopColor: '#F0F0F0' },
+  ingredientEditDoneBtn: { backgroundColor: '#1A1A1A', borderRadius: 12, paddingVertical: 16, alignItems: 'center' },
+  ingredientEditDoneBtnText: { fontSize: 16, fontWeight: '600', color: '#FFF' },
 });
 
 // ============ CAMERA SCREEN COMPONENT ============
