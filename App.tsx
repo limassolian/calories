@@ -1451,11 +1451,49 @@ const cameraStyles = StyleSheet.create({
   placeholderButton: { width: 56, height: 56 },
 });
 
+// ============ DATE HELPERS ============
+const getDateKey = (date: Date): string => {
+  return date.toISOString().split('T')[0];
+};
+
+const getDayName = (date: Date): string => {
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  if (getDateKey(date) === getDateKey(today)) return 'Today';
+  if (getDateKey(date) === getDateKey(yesterday)) return 'Yesterday';
+
+  return date.toLocaleDateString('en-US', { weekday: 'short' });
+};
+
+const getDateDisplay = (date: Date): string => {
+  return date.getDate().toString();
+};
+
+const getMonthYear = (date: Date): string => {
+  return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+};
+
+// Generate array of dates (past 30 days including today)
+const generateDateRange = (days: number = 30): Date[] => {
+  const dates: Date[] = [];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  for (let i = 0; i < days; i++) {
+    const date = new Date(today);
+    date.setDate(today.getDate() - i);
+    dates.push(date);
+  }
+  return dates;
+};
+
 // ============ MAIN APP ============
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
-  const [entries, setEntries] = useState<FoodEntry[]>([]);
+  const [allEntries, setAllEntries] = useState<FoodEntry[]>([]);
   const [inputText, setInputText] = useState('');
   const [selectedImage, setSelectedImage] = useState<{ uri: string; base64: string } | null>(null);
   const [selectedEntry, setSelectedEntry] = useState<FoodEntry | null>(null);
@@ -1463,20 +1501,39 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showEntryDetail, setShowEntryDetail] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const dateScrollRef = useRef<ScrollView>(null);
 
-  // Load profile from storage
+  const dateRange = generateDateRange(30);
+
+  // Filter entries for selected date
+  const entries = allEntries.filter(entry => {
+    const entryDate = new Date(entry.timestamp);
+    return getDateKey(entryDate) === getDateKey(selectedDate);
+  });
+
+  // Check if selected date is today
+  const isToday = getDateKey(selectedDate) === getDateKey(new Date());
+
+  // Load profile and entries from storage
   useEffect(() => {
-    loadProfile();
+    loadData();
   }, []);
 
-  const loadProfile = async () => {
+  const loadData = async () => {
     try {
-      const stored = await AsyncStorage.getItem('userProfile');
-      if (stored) {
-        setProfile(JSON.parse(stored));
+      const [storedProfile, storedEntries] = await Promise.all([
+        AsyncStorage.getItem('userProfile'),
+        AsyncStorage.getItem('foodEntries'),
+      ]);
+      if (storedProfile) {
+        setProfile(JSON.parse(storedProfile));
+      }
+      if (storedEntries) {
+        setAllEntries(JSON.parse(storedEntries));
       }
     } catch (e) {
-      console.error('Failed to load profile:', e);
+      console.error('Failed to load data:', e);
     } finally {
       setIsLoading(false);
     }
@@ -1488,6 +1545,15 @@ export default function App() {
       setProfile(newProfile);
     } catch (e) {
       console.error('Failed to save profile:', e);
+    }
+  };
+
+  const saveEntries = async (newEntries: FoodEntry[]) => {
+    try {
+      await AsyncStorage.setItem('foodEntries', JSON.stringify(newEntries));
+      setAllEntries(newEntries);
+    } catch (e) {
+      console.error('Failed to save entries:', e);
     }
   };
 
@@ -1565,7 +1631,7 @@ export default function App() {
         servings: 1,
         timestamp: Date.now(),
       };
-      setEntries(prev => [newEntry, ...prev]);
+      saveEntries([newEntry, ...allEntries]);
       setInputText('');
       setSelectedImage(null);
       Keyboard.dismiss();
@@ -1574,11 +1640,11 @@ export default function App() {
     } finally {
       setIsAnalyzing(false);
     }
-  }, [inputText, selectedImage]);
+  }, [inputText, selectedImage, allEntries]);
 
   const updateEntry = useCallback((updatedEntry: FoodEntry) => {
-    setEntries(prev => prev.map(e => e.id === updatedEntry.id ? updatedEntry : e));
-  }, []);
+    saveEntries(allEntries.map(e => e.id === updatedEntry.id ? updatedEntry : e));
+  }, [allEntries]);
 
   const fixEntryIssue = useCallback(async (entry: FoodEntry): Promise<FoodEntry> => {
     const result = await analyzeWithAI(entry.description, entry.imageBase64, entry.imageUri);
@@ -1597,9 +1663,9 @@ export default function App() {
   const deleteEntry = useCallback((id: string) => {
     Alert.alert('Delete Entry', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => setEntries(prev => prev.filter(e => e.id !== id)) },
+      { text: 'Delete', style: 'destructive', onPress: () => saveEntries(allEntries.filter(e => e.id !== id)) },
     ]);
-  }, []);
+  }, [allEntries]);
 
   const handleCameraCapture = useCallback(async (image: { uri: string; base64: string }, mode: ScanMode) => {
     setShowCamera(false);
@@ -1623,7 +1689,7 @@ export default function App() {
           servings: 1,
           timestamp: Date.now(),
         };
-        setEntries(prev => [newEntry, ...prev]);
+        saveEntries([newEntry, ...allEntries]);
         setInputText('');
       } catch (error: any) {
         Alert.alert('Error', `Failed to look up barcode: ${error.message}`);
@@ -1721,7 +1787,7 @@ export default function App() {
           entry={selectedEntry}
           onClose={() => { setShowEntryDetail(false); setSelectedEntry(null); }}
           onUpdate={updateEntry}
-          onDelete={(id) => { setEntries(prev => prev.filter(e => e.id !== id)); }}
+          onDelete={(id) => { saveEntries(allEntries.filter(e => e.id !== id)); }}
           onFixIssue={fixEntryIssue}
         />
       </SafeAreaProvider>
@@ -1750,11 +1816,51 @@ export default function App() {
         <View style={styles.header}>
           <View>
             <Text style={styles.headerGreeting}>Hey {profile.name || 'there'}! 👋</Text>
-            <Text style={styles.headerTitle}>Today</Text>
+            <Text style={styles.headerTitle}>{getMonthYear(selectedDate)}</Text>
           </View>
           <TouchableOpacity style={styles.settingsButton} onPress={() => setShowSettings(true)}>
             <Ionicons name="settings-outline" size={22} color="#1A1A1A" />
           </TouchableOpacity>
+        </View>
+
+        {/* Date Selector */}
+        <View style={styles.dateSelectorContainer}>
+          <ScrollView
+            ref={dateScrollRef}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.dateSelectorContent}
+          >
+            {dateRange.map((date, index) => {
+              const isSelected = getDateKey(date) === getDateKey(selectedDate);
+              const dateIsToday = getDateKey(date) === getDateKey(new Date());
+              return (
+                <TouchableOpacity
+                  key={index}
+                  style={[
+                    styles.dateItem,
+                    isSelected && styles.dateItemSelected,
+                  ]}
+                  onPress={() => setSelectedDate(date)}
+                >
+                  <Text style={[
+                    styles.dateDayName,
+                    isSelected && styles.dateDayNameSelected,
+                    dateIsToday && !isSelected && styles.dateDayNameToday,
+                  ]}>
+                    {getDayName(date)}
+                  </Text>
+                  <Text style={[
+                    styles.dateNumber,
+                    isSelected && styles.dateNumberSelected,
+                  ]}>
+                    {getDateDisplay(date)}
+                  </Text>
+                  {dateIsToday && <View style={[styles.todayDot, isSelected && styles.todayDotSelected]} />}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
         </View>
 
         <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
@@ -1780,17 +1886,17 @@ export default function App() {
           {/* Entries */}
           {entries.length > 0 && (
             <View style={styles.entriesSection}>
-              <Text style={styles.sectionTitle}>Today's Log</Text>
+              <Text style={styles.sectionTitle}>{isToday ? "Today's Log" : `${getDayName(selectedDate)}'s Log`}</Text>
               {entries.map(renderEntry)}
-              <Text style={styles.hintText}>Tap for details • Long press to delete</Text>
+              {isToday && <Text style={styles.hintText}>Tap for details • Long press to delete</Text>}
             </View>
           )}
 
           {entries.length === 0 && (
             <View style={styles.emptyState}>
               <Text style={styles.emptyIcon}>🍽️</Text>
-              <Text style={styles.emptyTitle}>No entries yet</Text>
-              <Text style={styles.emptySubtitle}>Take a photo or describe what you ate</Text>
+              <Text style={styles.emptyTitle}>No entries {isToday ? 'yet' : 'for this day'}</Text>
+              <Text style={styles.emptySubtitle}>{isToday ? 'Take a photo or describe what you ate' : 'No food logged on this day'}</Text>
             </View>
           )}
         </ScrollView>
@@ -1936,8 +2042,19 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FDF6E9' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12 },
   headerGreeting: { fontSize: 14, color: '#666' },
-  headerTitle: { fontSize: 28, fontWeight: '700', color: '#1A1A1A' },
+  headerTitle: { fontSize: 24, fontWeight: '700', color: '#1A1A1A' },
   settingsButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#FFF', justifyContent: 'center', alignItems: 'center' },
+  dateSelectorContainer: { paddingVertical: 8 },
+  dateSelectorContent: { paddingHorizontal: 16 },
+  dateItem: { alignItems: 'center', paddingVertical: 10, paddingHorizontal: 14, marginHorizontal: 4, borderRadius: 16, minWidth: 56 },
+  dateItemSelected: { backgroundColor: '#FF8C42' },
+  dateDayName: { fontSize: 12, color: '#999', marginBottom: 4, fontWeight: '500' },
+  dateDayNameSelected: { color: '#FFF' },
+  dateDayNameToday: { color: '#FF8C42' },
+  dateNumber: { fontSize: 18, fontWeight: '700', color: '#1A1A1A' },
+  dateNumberSelected: { color: '#FFF' },
+  todayDot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#FF8C42', marginTop: 4 },
+  todayDotSelected: { backgroundColor: '#FFF' },
   content: { flex: 1, paddingHorizontal: 20 },
   caloriesCard: { backgroundColor: '#FF8C42', borderRadius: 20, padding: 24, marginBottom: 16, alignItems: 'center' },
   caloriesLabel: { fontSize: 14, color: 'rgba(255,255,255,0.8)', marginBottom: 4 },
