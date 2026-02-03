@@ -21,6 +21,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
+import { CameraView, useCameraPermissions, BarcodeScanningResult } from 'expo-camera';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -1243,6 +1244,213 @@ const detailStyles = StyleSheet.create({
   modalDeleteText: { fontSize: 16, fontWeight: '600', color: '#FFF' },
 });
 
+// ============ CAMERA SCREEN COMPONENT ============
+type ScanMode = 'photo' | 'barcode' | 'label';
+
+interface CameraScreenProps {
+  onClose: () => void;
+  onCapture: (image: { uri: string; base64: string }, mode: ScanMode) => void;
+  onPickImage: () => void;
+}
+
+const CameraScreen: React.FC<CameraScreenProps> = ({ onClose, onCapture, onPickImage }) => {
+  const [permission, requestPermission] = useCameraPermissions();
+  const [scanMode, setScanMode] = useState<ScanMode>('photo');
+  const [flash, setFlash] = useState(false);
+  const [scannedBarcode, setScannedBarcode] = useState<string | null>(null);
+  const cameraRef = useRef<CameraView>(null);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+  }, []);
+
+  const handleBarcodeScanned = (result: BarcodeScanningResult) => {
+    if (scanMode === 'barcode' && !scannedBarcode) {
+      setScannedBarcode(result.data);
+      // Vibrate feedback
+      Alert.alert(
+        'Barcode Scanned',
+        `Found: ${result.data}`,
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => setScannedBarcode(null) },
+          { text: 'Look Up', onPress: () => {
+            onCapture({ uri: '', base64: result.data }, 'barcode');
+          }}
+        ]
+      );
+    }
+  };
+
+  const takePicture = async () => {
+    if (cameraRef.current) {
+      try {
+        const photo = await cameraRef.current.takePictureAsync({
+          base64: true,
+          quality: 0.3,
+        });
+        if (photo && photo.base64) {
+          onCapture({ uri: photo.uri, base64: photo.base64 }, scanMode);
+        }
+      } catch (error) {
+        Alert.alert('Error', 'Failed to take picture');
+      }
+    }
+  };
+
+  if (!permission) {
+    return (
+      <View style={cameraStyles.container}>
+        <ActivityIndicator size="large" color="#FF8C42" />
+      </View>
+    );
+  }
+
+  if (!permission.granted) {
+    return (
+      <View style={cameraStyles.permissionContainer}>
+        <StatusBar style="dark" />
+        <Ionicons name="camera-outline" size={80} color="#CCC" style={{ marginBottom: 24 }} />
+        <Text style={cameraStyles.permissionTitle}>Camera Access Required</Text>
+        <Text style={cameraStyles.permissionText}>
+          We need camera access to scan your food and barcodes
+        </Text>
+        <TouchableOpacity style={cameraStyles.permissionButton} onPress={requestPermission}>
+          <Text style={cameraStyles.permissionButtonText}>Grant Permission</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={cameraStyles.permissionCancel} onPress={onClose}>
+          <Text style={cameraStyles.permissionCancelText}>Cancel</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  return (
+    <View style={cameraStyles.container}>
+      <StatusBar style="light" />
+
+      {/* Camera View */}
+      <CameraView
+        ref={cameraRef}
+        style={cameraStyles.camera}
+        facing="back"
+        flash={flash ? 'on' : 'off'}
+        barcodeScannerSettings={{
+          barcodeTypes: scanMode === 'barcode' ? ['ean13', 'ean8', 'upc_a', 'upc_e', 'code128', 'code39', 'qr'] : [],
+        }}
+        onBarcodeScanned={scanMode === 'barcode' ? handleBarcodeScanned : undefined}
+      >
+        {/* Top Controls */}
+        <View style={cameraStyles.topControls}>
+          <TouchableOpacity style={cameraStyles.topButton} onPress={onClose}>
+            <Ionicons name="close" size={28} color="#FFF" />
+          </TouchableOpacity>
+          <TouchableOpacity style={cameraStyles.topButton} onPress={() => setFlash(!flash)}>
+            <Ionicons name={flash ? 'flash' : 'flash-off'} size={24} color="#FFF" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Scan Frame for barcode/label mode */}
+        {(scanMode === 'barcode' || scanMode === 'label') && (
+          <View style={cameraStyles.scanFrameContainer}>
+            <View style={cameraStyles.scanFrame}>
+              <View style={[cameraStyles.corner, cameraStyles.cornerTL]} />
+              <View style={[cameraStyles.corner, cameraStyles.cornerTR]} />
+              <View style={[cameraStyles.corner, cameraStyles.cornerBL]} />
+              <View style={[cameraStyles.corner, cameraStyles.cornerBR]} />
+            </View>
+            <Text style={cameraStyles.scanHint}>
+              {scanMode === 'barcode' ? 'Align barcode within frame' : 'Align nutrition label within frame'}
+            </Text>
+          </View>
+        )}
+
+        {/* Bottom Controls */}
+        <View style={cameraStyles.bottomControls}>
+          {/* Mode Selector */}
+          <View style={cameraStyles.modeSelector}>
+            <TouchableOpacity
+              style={[cameraStyles.modeButton, scanMode === 'photo' && cameraStyles.modeButtonActive]}
+              onPress={() => { setScanMode('photo'); setScannedBarcode(null); }}
+            >
+              <Ionicons name="camera-outline" size={20} color={scanMode === 'photo' ? '#FF8C42' : '#FFF'} />
+              <Text style={[cameraStyles.modeText, scanMode === 'photo' && cameraStyles.modeTextActive]}>Photo</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[cameraStyles.modeButton, scanMode === 'barcode' && cameraStyles.modeButtonActive]}
+              onPress={() => { setScanMode('barcode'); setScannedBarcode(null); }}
+            >
+              <Ionicons name="barcode-outline" size={20} color={scanMode === 'barcode' ? '#FF8C42' : '#FFF'} />
+              <Text style={[cameraStyles.modeText, scanMode === 'barcode' && cameraStyles.modeTextActive]}>Barcode</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[cameraStyles.modeButton, scanMode === 'label' && cameraStyles.modeButtonActive]}
+              onPress={() => { setScanMode('label'); setScannedBarcode(null); }}
+            >
+              <Ionicons name="document-text-outline" size={20} color={scanMode === 'label' ? '#FF8C42' : '#FFF'} />
+              <Text style={[cameraStyles.modeText, scanMode === 'label' && cameraStyles.modeTextActive]}>Label</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Capture Controls */}
+          <View style={cameraStyles.captureControls}>
+            <TouchableOpacity style={cameraStyles.galleryButton} onPress={onPickImage}>
+              <Ionicons name="images-outline" size={28} color="#FFF" />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={cameraStyles.captureButton} onPress={takePicture}>
+              <View style={cameraStyles.captureButtonInner}>
+                {scanMode === 'barcode' ? (
+                  <Ionicons name="scan-outline" size={32} color="#FF8C42" />
+                ) : (
+                  <View style={cameraStyles.captureButtonCore} />
+                )}
+              </View>
+            </TouchableOpacity>
+
+            <View style={cameraStyles.placeholderButton} />
+          </View>
+        </View>
+      </CameraView>
+    </View>
+  );
+};
+
+// ============ CAMERA SCREEN STYLES ============
+const cameraStyles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#000' },
+  camera: { flex: 1 },
+  permissionContainer: { flex: 1, backgroundColor: '#FDF6E9', justifyContent: 'center', alignItems: 'center', padding: 40 },
+  permissionTitle: { fontSize: 24, fontWeight: '700', color: '#1A1A1A', marginBottom: 12, textAlign: 'center' },
+  permissionText: { fontSize: 16, color: '#666', textAlign: 'center', marginBottom: 32, lineHeight: 24 },
+  permissionButton: { backgroundColor: '#FF8C42', paddingVertical: 16, paddingHorizontal: 48, borderRadius: 12, marginBottom: 16 },
+  permissionButtonText: { fontSize: 16, fontWeight: '600', color: '#FFF' },
+  permissionCancel: { paddingVertical: 12 },
+  permissionCancelText: { fontSize: 16, color: '#666' },
+  topControls: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 50, paddingHorizontal: 20 },
+  topButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
+  scanFrameContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  scanFrame: { width: 280, height: 180, position: 'relative' },
+  corner: { position: 'absolute', width: 24, height: 24, borderColor: '#FF8C42', borderWidth: 3 },
+  cornerTL: { top: 0, left: 0, borderRightWidth: 0, borderBottomWidth: 0 },
+  cornerTR: { top: 0, right: 0, borderLeftWidth: 0, borderBottomWidth: 0 },
+  cornerBL: { bottom: 0, left: 0, borderRightWidth: 0, borderTopWidth: 0 },
+  cornerBR: { bottom: 0, right: 0, borderLeftWidth: 0, borderTopWidth: 0 },
+  scanHint: { color: '#FFF', fontSize: 14, marginTop: 20, textAlign: 'center' },
+  bottomControls: { paddingBottom: 40 },
+  modeSelector: { flexDirection: 'row', justifyContent: 'center', marginBottom: 30, paddingHorizontal: 20 },
+  modeButton: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 20, marginHorizontal: 6 },
+  modeButtonActive: { backgroundColor: 'rgba(255,140,66,0.2)' },
+  modeText: { fontSize: 14, color: '#FFF', marginLeft: 6 },
+  modeTextActive: { color: '#FF8C42', fontWeight: '600' },
+  captureControls: { flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', paddingHorizontal: 40 },
+  galleryButton: { width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center' },
+  captureButton: { width: 80, height: 80, borderRadius: 40, backgroundColor: '#FFF', justifyContent: 'center', alignItems: 'center' },
+  captureButtonInner: { width: 68, height: 68, borderRadius: 34, backgroundColor: '#FFF', borderWidth: 3, borderColor: '#1A1A1A', justifyContent: 'center', alignItems: 'center' },
+  captureButtonCore: { width: 54, height: 54, borderRadius: 27, backgroundColor: '#FF8C42' },
+  placeholderButton: { width: 56, height: 56 },
+});
+
 // ============ MAIN APP ============
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
@@ -1254,6 +1462,7 @@ export default function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showEntryDetail, setShowEntryDetail] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
 
   // Load profile from storage
   useEffect(() => {
@@ -1392,6 +1601,49 @@ export default function App() {
     ]);
   }, []);
 
+  const handleCameraCapture = useCallback(async (image: { uri: string; base64: string }, mode: ScanMode) => {
+    setShowCamera(false);
+
+    if (mode === 'barcode') {
+      // For barcode, the base64 field contains the barcode data
+      setInputText(`Barcode: ${image.base64}`);
+      // Trigger analysis with the barcode
+      setIsAnalyzing(true);
+      try {
+        const result = await analyzeWithAI(`Food product with barcode: ${image.base64}. Please identify this product and provide nutritional information.`);
+        const newEntry: FoodEntry = {
+          id: Date.now().toString(),
+          description: result.description,
+          calories: result.calories,
+          protein: result.protein,
+          carbs: result.carbs,
+          fat: result.fat,
+          aiAnalysis: result.analysis,
+          ingredients: result.ingredients || [],
+          servings: 1,
+          timestamp: Date.now(),
+        };
+        setEntries(prev => [newEntry, ...prev]);
+        setInputText('');
+      } catch (error: any) {
+        Alert.alert('Error', `Failed to look up barcode: ${error.message}`);
+      } finally {
+        setIsAnalyzing(false);
+      }
+    } else {
+      // For photo or label mode, set the image for processing
+      setSelectedImage(image);
+      if (mode === 'label') {
+        setInputText('Nutrition label');
+      }
+    }
+  }, []);
+
+  const handleCameraPickImage = useCallback(async () => {
+    setShowCamera(false);
+    await pickImage();
+  }, []);
+
   const renderProgressBar = (label: string, current: number, goal: number, color: string) => {
     const progress = Math.min(current / goal, 1);
     const isOver = current > goal;
@@ -1476,6 +1728,19 @@ export default function App() {
     );
   }
 
+  // Show camera screen
+  if (showCamera) {
+    return (
+      <SafeAreaProvider>
+        <CameraScreen
+          onClose={() => setShowCamera(false)}
+          onCapture={handleCameraCapture}
+          onPickImage={handleCameraPickImage}
+        />
+      </SafeAreaProvider>
+    );
+  }
+
   // Main app
   return (
     <SafeAreaProvider>
@@ -1547,8 +1812,8 @@ export default function App() {
             </View>
           )}
           <View style={styles.inputRow}>
-            <TouchableOpacity style={styles.iconButton} onPress={takePhoto} disabled={isAnalyzing}>
-              <Ionicons name="camera-outline" size={22} color="#1A1A1A" />
+            <TouchableOpacity style={styles.iconButton} onPress={() => setShowCamera(true)} disabled={isAnalyzing}>
+              <Ionicons name="scan-outline" size={22} color="#1A1A1A" />
             </TouchableOpacity>
             <TouchableOpacity style={styles.iconButton} onPress={pickImage} disabled={isAnalyzing}>
               <Ionicons name="image-outline" size={22} color="#1A1A1A" />
