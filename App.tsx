@@ -1957,7 +1957,16 @@ export default function App() {
           </View>
           <View style={styles.headerRight}>
             {/* Streak Badge */}
-            <TouchableOpacity style={styles.streakBadge}>
+            <TouchableOpacity
+              style={styles.streakBadge}
+              onPress={() => Alert.alert(
+                `${streakInfo.currentStreak > 0 ? '🔥 ' + streakInfo.currentStreak + ' Day Streak!' : 'No Streak Yet'}`,
+                streakInfo.currentStreak > 0
+                  ? `${streakInfo.isActiveToday ? 'Keep it going!' : 'Log food today to continue!'}\n\nBest streak: ${streakInfo.longestStreak} days`
+                  : 'Start logging food daily to build your streak!',
+                [{ text: 'OK' }]
+              )}
+            >
               <Ionicons name="flame" size={18} color={streakInfo.currentStreak > 0 ? '#FF8C42' : '#CCC'} />
               <Text style={[styles.streakText, streakInfo.currentStreak > 0 && styles.streakTextActive]}>
                 {streakInfo.currentStreak}
@@ -1968,31 +1977,6 @@ export default function App() {
             </TouchableOpacity>
           </View>
         </View>
-
-        {/* Streak Card - Show only when there's a streak */}
-        {streakInfo.currentStreak > 0 && (
-          <View style={styles.streakCard}>
-            <View style={styles.streakCardLeft}>
-              <View style={styles.streakIconContainer}>
-                <Ionicons name="flame" size={28} color="#FF8C42" />
-              </View>
-              <View>
-                <Text style={styles.streakCardTitle}>
-                  {streakInfo.currentStreak} Day Streak!
-                </Text>
-                <Text style={styles.streakCardSubtitle}>
-                  {streakInfo.isActiveToday ? 'Keep it going!' : 'Log food today to continue!'}
-                </Text>
-              </View>
-            </View>
-            <View style={styles.streakStats}>
-              <View style={styles.streakStat}>
-                <Text style={styles.streakStatValue}>{streakInfo.longestStreak}</Text>
-                <Text style={styles.streakStatLabel}>Best</Text>
-              </View>
-            </View>
-          </View>
-        )}
 
         {/* Date Selector */}
         <View style={styles.dateSelectorContainer}>
