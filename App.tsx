@@ -78,6 +78,7 @@ interface NutritionResult {
   description: string;
   analysis: string;
   ingredients: Ingredient[];
+  recognized: boolean;
 }
 
 const DEFAULT_PROFILE: UserProfile = {
@@ -178,6 +179,7 @@ const analyzeWithAI = async (
 
 IMPORTANT: Respond ONLY with a valid JSON object in this exact format, no other text:
 {
+  "recognized": <true if food is clearly identifiable, false if unclear/not food>,
   "calories": <total number>,
   "protein": <total grams>,
   "carbs": <total grams>,
@@ -195,6 +197,8 @@ IMPORTANT: Respond ONLY with a valid JSON object in this exact format, no other 
     }
   ]
 }
+
+If you cannot clearly identify the food or the image doesn't show food, set "recognized" to false and provide your best guess or return 0 values.
 
 Guidelines:
 - Use standard portion sizes if not specified
@@ -264,6 +268,7 @@ Guidelines:
         description: result.description || description,
         analysis: result.analysis || 'AI analysis completed.',
         ingredients: result.ingredients || [],
+        recognized: result.recognized !== false,
       };
     }
 
@@ -272,13 +277,14 @@ Guidelines:
     return {
       ...fallbackEstimation(description),
       analysis: `AI error: ${error.message}. Using estimate.`,
+      recognized: true,
     };
   }
 };
 
 const fallbackEstimation = (description: string): NutritionResult => {
   const lower = description.toLowerCase();
-  const foodDatabase: Record<string, Omit<NutritionResult, 'description' | 'analysis'>> = {
+  const foodDatabase: Record<string, Omit<NutritionResult, 'description' | 'analysis' | 'recognized'>> = {
     'burger': { calories: 540, protein: 25, carbs: 45, fat: 29, ingredients: [
       { name: 'Beef Patty', calories: 250, protein: 20, carbs: 0, fat: 18, serving: '1 patty' },
       { name: 'Burger Bun', calories: 150, protein: 4, carbs: 28, fat: 2, serving: '1 bun' },
@@ -310,13 +316,14 @@ const fallbackEstimation = (description: string): NutritionResult => {
 
   for (const [food, nutrition] of Object.entries(foodDatabase)) {
     if (lower.includes(food)) {
-      return { ...nutrition, description, analysis: `Estimated based on typical ${food}.` };
+      return { ...nutrition, description, analysis: `Estimated based on typical ${food}.`, recognized: true };
     }
   }
 
   return {
     calories: 300, protein: 15, carbs: 35, fat: 12, description, analysis: 'Estimated.',
-    ingredients: [{ name: description, calories: 300, protein: 15, carbs: 35, fat: 12, serving: '1 serving' }]
+    ingredients: [{ name: description, calories: 300, protein: 15, carbs: 35, fat: 12, serving: '1 serving' }],
+    recognized: true,
   };
 };
 
@@ -1440,7 +1447,7 @@ const cameraStyles = StyleSheet.create({
   cornerBL: { bottom: 0, left: 0, borderRightWidth: 0, borderTopWidth: 0 },
   cornerBR: { bottom: 0, right: 0, borderLeftWidth: 0, borderTopWidth: 0 },
   scanHint: { color: '#FFF', fontSize: 14, marginTop: 20, textAlign: 'center' },
-  bottomControls: { paddingBottom: 40 },
+  bottomControls: { position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: 40 },
   modeSelector: { flexDirection: 'row', justifyContent: 'center', marginBottom: 30, paddingHorizontal: 20 },
   modeButton: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 20, marginHorizontal: 6 },
   modeButtonActive: { backgroundColor: 'rgba(255,140,66,0.2)' },
@@ -1456,7 +1463,11 @@ const cameraStyles = StyleSheet.create({
 
 // ============ DATE HELPERS ============
 const getDateKey = (date: Date): string => {
-  return date.toISOString().split('T')[0];
+  // Use local date to avoid timezone issues (toISOString uses UTC)
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 };
 
 const getDayName = (date: Date): string => {
@@ -1478,13 +1489,13 @@ const getMonthYear = (date: Date): string => {
   return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 };
 
-// Generate array of dates (past 30 days including today)
+// Generate array of dates (past 30 days including today) - oldest first, today last (right side)
 const generateDateRange = (days: number = 30): Date[] => {
   const dates: Date[] = [];
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  for (let i = 0; i < days; i++) {
+  for (let i = days - 1; i >= 0; i--) {
     const date = new Date(today);
     date.setDate(today.getDate() - i);
     dates.push(date);
@@ -1608,6 +1619,13 @@ export default function App() {
     loadData();
   }, []);
 
+  // Scroll date selector to the end (today) on mount
+  useEffect(() => {
+    setTimeout(() => {
+      dateScrollRef.current?.scrollToEnd({ animated: false });
+    }, 100);
+  }, []);
+
   const loadData = async () => {
     try {
       const [storedProfile, storedEntries] = await Promise.all([
@@ -1688,6 +1706,41 @@ export default function App() {
     try {
       const description = inputText.trim() || 'Food from photo';
       const result = await analyzeWithAI(description, selectedImage?.base64, selectedImage?.uri);
+
+      // Check if food was recognized
+      if (!result.recognized) {
+        Alert.alert(
+          'Food Not Recognized',
+          'We couldn\'t clearly identify this food. Please try describing it in more detail using text, or take a clearer photo.',
+          [
+            { text: 'Try Again', style: 'cancel' },
+            {
+              text: 'Add Anyway',
+              onPress: () => {
+                const newEntry: FoodEntry = {
+                  id: Date.now().toString(),
+                  description: result.description,
+                  calories: result.calories,
+                  protein: result.protein,
+                  carbs: result.carbs,
+                  fat: result.fat,
+                  imageUri: selectedImage?.uri,
+                  imageBase64: selectedImage?.base64,
+                  aiAnalysis: result.analysis,
+                  ingredients: result.ingredients || [],
+                  servings: 1,
+                  timestamp: Date.now(),
+                };
+                saveEntries([newEntry, ...allEntries]);
+                setInputText('');
+                setSelectedImage(null);
+              }
+            },
+          ]
+        );
+        return;
+      }
+
       const newEntry: FoodEntry = {
         id: Date.now().toString(),
         description: result.description,
@@ -1748,6 +1801,20 @@ export default function App() {
       setIsAnalyzing(true);
       try {
         const result = await analyzeWithAI(`Food product with barcode: ${image.base64}. Please identify this product and provide nutritional information.`);
+
+        // Check if product was recognized
+        if (!result.recognized) {
+          Alert.alert(
+            'Product Not Found',
+            'We couldn\'t find this product in our database. Please describe the food using text instead.',
+            [
+              { text: 'OK', style: 'default' },
+            ]
+          );
+          setInputText('');
+          return;
+        }
+
         const newEntry: FoodEntry = {
           id: Date.now().toString(),
           description: result.description,
