@@ -282,6 +282,136 @@ Guidelines:
   }
 };
 
+// Analyze with correction - maintains context from previous analysis
+const analyzeWithCorrection = async (
+  entry: FoodEntry,
+  correction: string
+): Promise<NutritionResult> => {
+  if (!CLAUDE_API_KEY) {
+    return {
+      calories: entry.calories,
+      protein: entry.protein,
+      carbs: entry.carbs,
+      fat: entry.fat,
+      description: entry.description,
+      analysis: 'Unable to apply correction without API key.',
+      ingredients: entry.ingredients || [],
+      recognized: true,
+    };
+  }
+
+  try {
+    const systemPrompt = `You are a nutrition expert AI. The user previously logged a food item and wants to correct the analysis.
+
+PREVIOUS ANALYSIS:
+- Food: ${entry.description}
+- Calories: ${entry.calories}
+- Protein: ${entry.protein}g
+- Carbs: ${entry.carbs}g
+- Fat: ${entry.fat}g
+${entry.ingredients && entry.ingredients.length > 0 ? `- Ingredients: ${entry.ingredients.map(i => `${i.name} (${i.calories} cal)`).join(', ')}` : ''}
+
+USER'S CORRECTION: "${correction}"
+
+Apply the user's correction to the nutritional information. Understand context - for example:
+- "It's 1 not 2" means they had 1 serving instead of 2, so halve the values
+- "Add rice" means add rice to the meal
+- "Remove the cheese" means subtract cheese from the totals
+- "It was grilled not fried" means adjust for cooking method
+
+IMPORTANT: Respond ONLY with a valid JSON object:
+{
+  "recognized": true,
+  "calories": <corrected number>,
+  "protein": <corrected grams>,
+  "carbs": <corrected grams>,
+  "fat": <corrected grams>,
+  "description": "<updated description reflecting the correction>",
+  "analysis": "<brief explanation of what was corrected>",
+  "ingredients": [
+    {
+      "name": "<ingredient name>",
+      "calories": <number>,
+      "protein": <grams>,
+      "carbs": <grams>,
+      "fat": <grams>,
+      "serving": "<serving description>"
+    }
+  ]
+}`;
+
+    let userContent: any[] = [];
+
+    // Include image if available for context
+    if (entry.imageBase64) {
+      const mediaType = entry.imageUri ? getMediaType(entry.imageUri) : 'image/jpeg';
+      userContent.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: mediaType,
+          data: entry.imageBase64,
+        },
+      });
+    }
+
+    userContent.push({
+      type: "text",
+      text: `Please apply this correction to my food entry: "${correction}"`,
+    });
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': CLAUDE_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-3-haiku-20240307',
+        max_tokens: 1024,
+        system: systemPrompt,
+        messages: [{ role: "user", content: userContent }],
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const content = data.content[0].text;
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+
+    if (jsonMatch) {
+      const result = JSON.parse(jsonMatch[0]);
+      return {
+        calories: result.calories || entry.calories,
+        protein: result.protein || entry.protein,
+        carbs: result.carbs || entry.carbs,
+        fat: result.fat || entry.fat,
+        description: result.description || entry.description,
+        analysis: result.analysis || 'Correction applied.',
+        ingredients: result.ingredients || entry.ingredients || [],
+        recognized: true,
+      };
+    }
+
+    throw new Error('Invalid response format');
+  } catch (error: any) {
+    return {
+      calories: entry.calories,
+      protein: entry.protein,
+      carbs: entry.carbs,
+      fat: entry.fat,
+      description: entry.description,
+      analysis: `Correction failed: ${error.message}`,
+      ingredients: entry.ingredients || [],
+      recognized: true,
+    };
+  }
+};
+
 const fallbackEstimation = (description: string): NutritionResult => {
   const lower = description.toLowerCase();
   const foodDatabase: Record<string, Omit<NutritionResult, 'description' | 'analysis' | 'recognized'>> = {
@@ -963,13 +1093,15 @@ interface EntryDetailProps {
   onClose: () => void;
   onUpdate: (entry: FoodEntry) => void;
   onDelete: (id: string) => void;
-  onFixIssue: (entry: FoodEntry) => Promise<FoodEntry>;
+  onFixIssue: (entry: FoodEntry, correction: string) => Promise<FoodEntry>;
 }
 
 const EntryDetail: React.FC<EntryDetailProps> = ({ entry, onClose, onUpdate, onDelete, onFixIssue }) => {
   const [editedEntry, setEditedEntry] = useState<FoodEntry>(entry);
   const [isFixing, setIsFixing] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showFixModal, setShowFixModal] = useState(false);
+  const [correctionText, setCorrectionText] = useState('');
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(50)).current;
 
@@ -997,13 +1129,23 @@ const EntryDetail: React.FC<EntryDetailProps> = ({ entry, onClose, onUpdate, onD
     });
   };
 
-  const handleFixIssue = async () => {
+  const handleFixIssue = () => {
+    setShowFixModal(true);
+  };
+
+  const submitCorrection = async () => {
+    if (!correctionText.trim()) {
+      Alert.alert('Please describe the issue', 'Tell us what needs to be corrected.');
+      return;
+    }
+    setShowFixModal(false);
     setIsFixing(true);
     try {
-      const fixedEntry = await onFixIssue(editedEntry);
+      const fixedEntry = await onFixIssue(editedEntry, correctionText.trim());
       setEditedEntry(fixedEntry);
+      setCorrectionText('');
     } catch (error) {
-      Alert.alert('Error', 'Failed to re-analyze. Please try again.');
+      Alert.alert('Error', 'Failed to apply correction. Please try again.');
     } finally {
       setIsFixing(false);
     }
@@ -1193,6 +1335,42 @@ const EntryDetail: React.FC<EntryDetailProps> = ({ entry, onClose, onUpdate, onD
           </View>
         </View>
       </Modal>
+
+      {/* Fix Issue Modal */}
+      <Modal visible={showFixModal} transparent animationType="fade">
+        <KeyboardAvoidingView behavior="padding" style={detailStyles.modalOverlay}>
+          <View style={detailStyles.fixModalContent}>
+            <View style={detailStyles.fixModalHeader}>
+              <Ionicons name="sparkles" size={24} color="#FF8C42" />
+              <Text style={detailStyles.fixModalTitle}>Fix Results</Text>
+            </View>
+            <Text style={detailStyles.fixModalSubtitle}>
+              Describe what needs to be corrected. For example: "It's 1 serving not 2" or "Add rice on the side"
+            </Text>
+            <TextInput
+              style={detailStyles.fixModalInput}
+              placeholder="Describe the correction..."
+              placeholderTextColor="#999"
+              value={correctionText}
+              onChangeText={setCorrectionText}
+              multiline
+              autoFocus
+            />
+            <View style={detailStyles.modalButtons}>
+              <TouchableOpacity
+                style={detailStyles.modalCancel}
+                onPress={() => { setShowFixModal(false); setCorrectionText(''); }}
+              >
+                <Text style={detailStyles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={detailStyles.fixModalSubmit} onPress={submitCorrection}>
+                <Ionicons name="checkmark" size={18} color="#FFF" />
+                <Text style={detailStyles.fixModalSubmitText}>Apply Fix</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 };
@@ -1252,6 +1430,13 @@ const detailStyles = StyleSheet.create({
   modalCancelText: { fontSize: 16, fontWeight: '600', color: '#666' },
   modalDelete: { flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#FF4757', borderRadius: 10 },
   modalDeleteText: { fontSize: 16, fontWeight: '600', color: '#FFF' },
+  fixModalContent: { backgroundColor: '#FFF', borderRadius: 20, padding: 24, width: '90%', maxWidth: 400 },
+  fixModalHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  fixModalTitle: { fontSize: 20, fontWeight: '700', color: '#1A1A1A', marginLeft: 8 },
+  fixModalSubtitle: { fontSize: 14, color: '#666', marginBottom: 16, lineHeight: 20 },
+  fixModalInput: { backgroundColor: '#F5F5F5', borderRadius: 12, padding: 14, fontSize: 16, color: '#1A1A1A', minHeight: 80, textAlignVertical: 'top', marginBottom: 20 },
+  fixModalSubmit: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', paddingVertical: 12, backgroundColor: '#FF8C42', borderRadius: 10 },
+  fixModalSubmitText: { fontSize: 16, fontWeight: '600', color: '#FFF', marginLeft: 6 },
 });
 
 // ============ CAMERA SCREEN COMPONENT ============
@@ -1770,10 +1955,11 @@ export default function App() {
     saveEntries(allEntries.map(e => e.id === updatedEntry.id ? updatedEntry : e));
   }, [allEntries]);
 
-  const fixEntryIssue = useCallback(async (entry: FoodEntry): Promise<FoodEntry> => {
-    const result = await analyzeWithAI(entry.description, entry.imageBase64, entry.imageUri);
+  const fixEntryIssue = useCallback(async (entry: FoodEntry, correction: string): Promise<FoodEntry> => {
+    const result = await analyzeWithCorrection(entry, correction);
     return {
       ...entry,
+      description: result.description,
       calories: result.calories,
       protein: result.protein,
       carbs: result.carbs,
