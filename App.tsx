@@ -375,29 +375,49 @@ IMPORTANT: Respond ONLY with a valid JSON object:
       }),
     });
 
+    const responseText = await response.text();
+
     if (!response.ok) {
+      console.log('API Error Response:', responseText);
       throw new Error(`API error: ${response.status}`);
     }
 
-    const data = await response.json();
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (parseError) {
+      console.log('Failed to parse response:', responseText);
+      throw new Error('Invalid API response');
+    }
+
+    if (!data.content || !data.content[0] || !data.content[0].text) {
+      console.log('Unexpected response structure:', data);
+      throw new Error('Unexpected response format');
+    }
+
     const content = data.content[0].text;
     const jsonMatch = content.match(/\{[\s\S]*\}/);
 
     if (jsonMatch) {
-      const result = JSON.parse(jsonMatch[0]);
-      return {
-        calories: result.calories || entry.calories,
-        protein: result.protein || entry.protein,
-        carbs: result.carbs || entry.carbs,
-        fat: result.fat || entry.fat,
-        description: result.description || entry.description,
-        analysis: result.analysis || 'Correction applied.',
-        ingredients: result.ingredients || entry.ingredients || [],
-        recognized: true,
-      };
+      try {
+        const result = JSON.parse(jsonMatch[0]);
+        return {
+          calories: result.calories || entry.calories,
+          protein: result.protein || entry.protein,
+          carbs: result.carbs || entry.carbs,
+          fat: result.fat || entry.fat,
+          description: result.description || entry.description,
+          analysis: result.analysis || 'Correction applied.',
+          ingredients: result.ingredients || entry.ingredients || [],
+          recognized: true,
+        };
+      } catch (jsonParseError) {
+        console.log('Failed to parse AI JSON:', jsonMatch[0]);
+        throw new Error('Failed to parse AI response');
+      }
     }
 
-    throw new Error('Invalid response format');
+    throw new Error('No JSON found in response');
   } catch (error: any) {
     return {
       calories: entry.calories,
@@ -1150,8 +1170,9 @@ const EntryDetail: React.FC<EntryDetailProps> = ({ entry, onClose, onUpdate, onD
       const fixedEntry = await onFixIssue(editedEntry, correctionText.trim());
       setEditedEntry(fixedEntry);
       setCorrectionText('');
-    } catch (error) {
-      Alert.alert('Error', 'Failed to apply correction. Please try again.');
+      Alert.alert('Success', 'Correction applied successfully!');
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to apply correction. Please try again.');
     } finally {
       setIsFixing(false);
     }
