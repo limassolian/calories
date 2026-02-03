@@ -170,8 +170,16 @@ const analyzeWithAI = async (
   imageUri?: string
 ): Promise<NutritionResult> => {
   if (!CLAUDE_API_KEY) {
+    console.log('No API key found. Using fallback estimation.');
+    Alert.alert(
+      'API Key Missing',
+      'No Claude API key found. Using estimated values. Add your API key to the .env file for accurate analysis.',
+      [{ text: 'OK' }]
+    );
     return fallbackEstimation(description);
   }
+
+  console.log('API Key present, making request...');
 
   try {
     const messages: any[] = [];
@@ -250,29 +258,49 @@ Guidelines:
       }),
     });
 
+    const responseText = await response.text();
+
     if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
+      console.log('API Error:', responseText);
+      throw new Error(`API error: ${response.status} - ${responseText.substring(0, 100)}`);
     }
 
-    const data = await response.json();
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (e) {
+      console.log('Failed to parse API response:', responseText.substring(0, 200));
+      throw new Error('Invalid API response format');
+    }
+
+    if (!data.content || !data.content[0] || !data.content[0].text) {
+      console.log('Unexpected API response structure:', JSON.stringify(data).substring(0, 200));
+      throw new Error('Unexpected API response');
+    }
+
     const content = data.content[0].text;
     const jsonMatch = content.match(/\{[\s\S]*\}/);
 
     if (jsonMatch) {
-      const result = JSON.parse(jsonMatch[0]);
-      return {
-        calories: result.calories || 300,
-        protein: result.protein || 15,
-        carbs: result.carbs || 35,
-        fat: result.fat || 12,
-        description: result.description || description,
-        analysis: result.analysis || 'AI analysis completed.',
-        ingredients: result.ingredients || [],
-        recognized: result.recognized !== false,
-      };
+      try {
+        const result = JSON.parse(jsonMatch[0]);
+        return {
+          calories: result.calories || 300,
+          protein: result.protein || 15,
+          carbs: result.carbs || 35,
+          fat: result.fat || 12,
+          description: result.description || description,
+          analysis: result.analysis || 'AI analysis completed.',
+          ingredients: result.ingredients || [],
+          recognized: result.recognized !== false,
+        };
+      } catch (parseError) {
+        console.log('Failed to parse AI JSON:', jsonMatch[0].substring(0, 200));
+        throw new Error('Failed to parse nutrition data');
+      }
     }
 
-    throw new Error('Invalid response format');
+    throw new Error('No nutrition data in response');
   } catch (error: any) {
     return {
       ...fallbackEstimation(description),
