@@ -1954,7 +1954,6 @@ export default function App() {
         <View style={styles.header}>
           <View>
             <Text style={styles.headerGreeting}>Hey {profile.name || 'there'}! 👋</Text>
-            <Text style={styles.headerTitle}>{getMonthYear(selectedDate)}</Text>
           </View>
           <View style={styles.headerRight}>
             {/* Streak Badge */}
