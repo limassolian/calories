@@ -29,6 +29,15 @@ const CLAUDE_API_KEY = process.env.EXPO_PUBLIC_CLAUDE_API_KEY || '';
 // ========================================
 
 // Types
+interface Ingredient {
+  name: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  serving: string;
+}
+
 interface FoodEntry {
   id: string;
   description: string;
@@ -37,7 +46,11 @@ interface FoodEntry {
   carbs: number;
   fat: number;
   imageUri?: string;
+  imageBase64?: string;
   aiAnalysis?: string;
+  ingredients: Ingredient[];
+  servings: number;
+  timestamp: number;
 }
 
 interface UserProfile {
@@ -63,6 +76,7 @@ interface NutritionResult {
   fat: number;
   description: string;
   analysis: string;
+  ingredients: Ingredient[];
 }
 
 const DEFAULT_PROFILE: UserProfile = {
@@ -155,23 +169,35 @@ const analyzeWithAI = async (
 
   try {
     const messages: any[] = [];
-    const systemPrompt = `You are a nutrition expert AI. Analyze the food described or shown and provide accurate nutritional estimates.
+    const systemPrompt = `You are a nutrition expert AI. Analyze the food described or shown and provide accurate nutritional estimates with ingredient breakdown.
 
 IMPORTANT: Respond ONLY with a valid JSON object in this exact format, no other text:
 {
-  "calories": <number>,
-  "protein": <number in grams>,
-  "carbs": <number in grams>,
-  "fat": <number in grams>,
+  "calories": <total number>,
+  "protein": <total grams>,
+  "carbs": <total grams>,
+  "fat": <total grams>,
   "description": "<brief description of the food>",
-  "analysis": "<1-2 sentence explanation of your estimate>"
+  "analysis": "<1-2 sentence explanation of your estimate>",
+  "ingredients": [
+    {
+      "name": "<ingredient name>",
+      "calories": <number>,
+      "protein": <grams>,
+      "carbs": <grams>,
+      "fat": <grams>,
+      "serving": "<serving description, e.g. '1 cup', '2 slices'>"
+    }
+  ]
 }
 
 Guidelines:
 - Use standard portion sizes if not specified
 - For restaurant food, use typical restaurant portions
 - Be conservative with estimates
-- Round to whole numbers`;
+- Round to whole numbers
+- Break down into individual ingredients when possible
+- Include 2-6 main ingredients`;
 
     let userContent: any[] = [];
 
@@ -232,6 +258,7 @@ Guidelines:
         fat: result.fat || 12,
         description: result.description || description,
         analysis: result.analysis || 'AI analysis completed.',
+        ingredients: result.ingredients || [],
       };
     }
 
@@ -247,12 +274,33 @@ Guidelines:
 const fallbackEstimation = (description: string): NutritionResult => {
   const lower = description.toLowerCase();
   const foodDatabase: Record<string, Omit<NutritionResult, 'description' | 'analysis'>> = {
-    'burger': { calories: 540, protein: 25, carbs: 45, fat: 29 },
-    'salad': { calories: 250, protein: 15, carbs: 20, fat: 12 },
-    'pizza': { calories: 285, protein: 12, carbs: 36, fat: 10 },
-    'chicken': { calories: 335, protein: 38, carbs: 0, fat: 8 },
-    'rice': { calories: 206, protein: 4, carbs: 45, fat: 0 },
-    'pasta': { calories: 400, protein: 12, carbs: 70, fat: 8 },
+    'burger': { calories: 540, protein: 25, carbs: 45, fat: 29, ingredients: [
+      { name: 'Beef Patty', calories: 250, protein: 20, carbs: 0, fat: 18, serving: '1 patty' },
+      { name: 'Burger Bun', calories: 150, protein: 4, carbs: 28, fat: 2, serving: '1 bun' },
+      { name: 'Cheese', calories: 90, protein: 5, carbs: 1, fat: 7, serving: '1 slice' },
+      { name: 'Toppings', calories: 50, protein: 1, carbs: 10, fat: 2, serving: '1 serving' },
+    ]},
+    'salad': { calories: 250, protein: 15, carbs: 20, fat: 12, ingredients: [
+      { name: 'Mixed Greens', calories: 20, protein: 2, carbs: 4, fat: 0, serving: '2 cups' },
+      { name: 'Chicken Breast', calories: 120, protein: 24, carbs: 0, fat: 3, serving: '3 oz' },
+      { name: 'Dressing', calories: 80, protein: 0, carbs: 4, fat: 7, serving: '2 tbsp' },
+    ]},
+    'pizza': { calories: 285, protein: 12, carbs: 36, fat: 10, ingredients: [
+      { name: 'Pizza Dough', calories: 150, protein: 4, carbs: 28, fat: 2, serving: '1 slice base' },
+      { name: 'Tomato Sauce', calories: 25, protein: 1, carbs: 5, fat: 0, serving: '2 tbsp' },
+      { name: 'Mozzarella', calories: 85, protein: 6, carbs: 1, fat: 6, serving: '1 oz' },
+    ]},
+    'chicken': { calories: 335, protein: 38, carbs: 0, fat: 8, ingredients: [
+      { name: 'Chicken Breast', calories: 335, protein: 38, carbs: 0, fat: 8, serving: '6 oz' },
+    ]},
+    'rice': { calories: 206, protein: 4, carbs: 45, fat: 0, ingredients: [
+      { name: 'White Rice', calories: 206, protein: 4, carbs: 45, fat: 0, serving: '1 cup cooked' },
+    ]},
+    'pasta': { calories: 400, protein: 12, carbs: 70, fat: 8, ingredients: [
+      { name: 'Pasta', calories: 220, protein: 8, carbs: 43, fat: 1, serving: '2 oz dry' },
+      { name: 'Marinara Sauce', calories: 70, protein: 2, carbs: 10, fat: 2, serving: '1/2 cup' },
+      { name: 'Parmesan', calories: 110, protein: 10, carbs: 1, fat: 7, serving: '1 oz' },
+    ]},
   };
 
   for (const [food, nutrition] of Object.entries(foodDatabase)) {
@@ -261,7 +309,10 @@ const fallbackEstimation = (description: string): NutritionResult => {
     }
   }
 
-  return { calories: 300, protein: 15, carbs: 35, fat: 12, description, analysis: 'Estimated.' };
+  return {
+    calories: 300, protein: 15, carbs: 35, fat: 12, description, analysis: 'Estimated.',
+    ingredients: [{ name: description, calories: 300, protein: 15, carbs: 35, fat: 12, serving: '1 serving' }]
+  };
 };
 
 // ============ ONBOARDING COMPONENT ============
@@ -894,6 +945,304 @@ const Settings: React.FC<SettingsProps> = ({ profile, onSave, onClose }) => {
   );
 };
 
+// ============ ENTRY DETAIL COMPONENT ============
+interface EntryDetailProps {
+  entry: FoodEntry;
+  onClose: () => void;
+  onUpdate: (entry: FoodEntry) => void;
+  onDelete: (id: string) => void;
+  onFixIssue: (entry: FoodEntry) => Promise<FoodEntry>;
+}
+
+const EntryDetail: React.FC<EntryDetailProps> = ({ entry, onClose, onUpdate, onDelete, onFixIssue }) => {
+  const [editedEntry, setEditedEntry] = useState<FoodEntry>(entry);
+  const [isFixing, setIsFixing] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(50)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
+    ]).start();
+  }, []);
+
+  const formatTime = (timestamp: number) => {
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  };
+
+  const handleServingsChange = (delta: number) => {
+    const newServings = Math.max(0.5, Math.min(10, editedEntry.servings + delta));
+    const ratio = newServings / editedEntry.servings;
+    setEditedEntry({
+      ...editedEntry,
+      servings: newServings,
+      calories: Math.round(entry.calories * newServings),
+      protein: Math.round(entry.protein * newServings),
+      carbs: Math.round(entry.carbs * newServings),
+      fat: Math.round(entry.fat * newServings),
+    });
+  };
+
+  const handleFixIssue = async () => {
+    setIsFixing(true);
+    try {
+      const fixedEntry = await onFixIssue(editedEntry);
+      setEditedEntry(fixedEntry);
+    } catch (error) {
+      Alert.alert('Error', 'Failed to re-analyze. Please try again.');
+    } finally {
+      setIsFixing(false);
+    }
+  };
+
+  const handleDone = () => {
+    onUpdate(editedEntry);
+    onClose();
+  };
+
+  const handleDelete = () => {
+    onDelete(entry.id);
+    onClose();
+  };
+
+  const totalCalories = Math.round(editedEntry.calories);
+  const totalProtein = Math.round(editedEntry.protein);
+  const totalCarbs = Math.round(editedEntry.carbs);
+  const totalFat = Math.round(editedEntry.fat);
+
+  return (
+    <View style={detailStyles.container}>
+      <StatusBar style="light" />
+
+      {/* Image Header */}
+      <View style={detailStyles.imageContainer}>
+        {editedEntry.imageUri ? (
+          <Image source={{ uri: editedEntry.imageUri }} style={detailStyles.image} />
+        ) : (
+          <View style={detailStyles.imagePlaceholder}>
+            <Ionicons name="restaurant-outline" size={64} color="#CCC" />
+          </View>
+        )}
+        <View style={detailStyles.imageOverlay} />
+
+        {/* Back Button */}
+        <TouchableOpacity style={detailStyles.backButton} onPress={onClose}>
+          <Ionicons name="arrow-back" size={24} color="#FFF" />
+        </TouchableOpacity>
+
+        {/* Delete Button */}
+        <TouchableOpacity style={detailStyles.deleteButton} onPress={() => setShowDeleteConfirm(true)}>
+          <Ionicons name="trash-outline" size={22} color="#FFF" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Content Card */}
+      <Animated.View
+        style={[
+          detailStyles.contentCard,
+          { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }
+        ]}
+      >
+        <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
+          {/* Header Row */}
+          <View style={detailStyles.headerRow}>
+            <View style={detailStyles.timeTag}>
+              <Ionicons name="time-outline" size={14} color="#666" />
+              <Text style={detailStyles.timeText}>{formatTime(editedEntry.timestamp)}</Text>
+            </View>
+          </View>
+
+          {/* Title and Servings */}
+          <View style={detailStyles.titleRow}>
+            <Text style={detailStyles.title} numberOfLines={2}>{editedEntry.description}</Text>
+            <View style={detailStyles.servingsControl}>
+              <TouchableOpacity style={detailStyles.servingBtn} onPress={() => handleServingsChange(-0.5)}>
+                <Ionicons name="remove" size={18} color="#FF8C42" />
+              </TouchableOpacity>
+              <Text style={detailStyles.servingsText}>{editedEntry.servings}</Text>
+              <TouchableOpacity style={detailStyles.servingBtn} onPress={() => handleServingsChange(0.5)}>
+                <Ionicons name="add" size={18} color="#FF8C42" />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Calories Card */}
+          <View style={detailStyles.caloriesCard}>
+            <View style={detailStyles.caloriesRow}>
+              <View style={detailStyles.caloriesIcon}>
+                <Ionicons name="flame-outline" size={24} color="#FF8C42" />
+              </View>
+              <View>
+                <Text style={detailStyles.caloriesLabel}>Calories</Text>
+                <Text style={detailStyles.caloriesValue}>{totalCalories}</Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Macros Row */}
+          <View style={detailStyles.macrosRow}>
+            <View style={detailStyles.macroCard}>
+              <View style={[detailStyles.macroIcon, { backgroundColor: '#FFEBE5' }]}>
+                <Ionicons name="fitness-outline" size={18} color="#FF6B6B" />
+              </View>
+              <Text style={detailStyles.macroLabel}>Protein</Text>
+              <Text style={detailStyles.macroValue}>{totalProtein}g</Text>
+            </View>
+            <View style={detailStyles.macroCard}>
+              <View style={[detailStyles.macroIcon, { backgroundColor: '#FFF5E5' }]}>
+                <Ionicons name="leaf-outline" size={18} color="#FF9F43" />
+              </View>
+              <Text style={detailStyles.macroLabel}>Carbs</Text>
+              <Text style={detailStyles.macroValue}>{totalCarbs}g</Text>
+            </View>
+            <View style={detailStyles.macroCard}>
+              <View style={[detailStyles.macroIcon, { backgroundColor: '#E5F4FF' }]}>
+                <Ionicons name="water-outline" size={18} color="#45B7D1" />
+              </View>
+              <Text style={detailStyles.macroLabel}>Fats</Text>
+              <Text style={detailStyles.macroValue}>{totalFat}g</Text>
+            </View>
+          </View>
+
+          {/* Ingredients Section */}
+          <View style={detailStyles.ingredientsSection}>
+            <View style={detailStyles.ingredientsHeader}>
+              <Text style={detailStyles.ingredientsTitle}>Ingredients</Text>
+            </View>
+
+            {editedEntry.ingredients.map((ingredient, index) => (
+              <View key={index} style={detailStyles.ingredientRow}>
+                <View style={detailStyles.ingredientInfo}>
+                  <Text style={detailStyles.ingredientName}>{ingredient.name}</Text>
+                  <Text style={detailStyles.ingredientCal}>{Math.round(ingredient.calories * editedEntry.servings)} cal</Text>
+                </View>
+                <Text style={detailStyles.ingredientServing}>{ingredient.serving}</Text>
+              </View>
+            ))}
+
+            {editedEntry.ingredients.length === 0 && (
+              <Text style={detailStyles.noIngredients}>No ingredient breakdown available</Text>
+            )}
+          </View>
+
+          {/* AI Analysis */}
+          {editedEntry.aiAnalysis && (
+            <View style={detailStyles.analysisSection}>
+              <View style={detailStyles.analysisHeader}>
+                <Ionicons name="sparkles" size={16} color="#FF8C42" />
+                <Text style={detailStyles.analysisTitle}>AI Analysis</Text>
+              </View>
+              <Text style={detailStyles.analysisText}>{editedEntry.aiAnalysis}</Text>
+            </View>
+          )}
+
+          <View style={{ height: 100 }} />
+        </ScrollView>
+
+        {/* Bottom Buttons */}
+        <View style={detailStyles.bottomButtons}>
+          <TouchableOpacity
+            style={detailStyles.fixButton}
+            onPress={handleFixIssue}
+            disabled={isFixing}
+          >
+            {isFixing ? (
+              <ActivityIndicator size="small" color="#FF8C42" />
+            ) : (
+              <>
+                <Ionicons name="sparkles-outline" size={18} color="#FF8C42" />
+                <Text style={detailStyles.fixButtonText}>Fix Issue</Text>
+              </>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity style={detailStyles.doneButton} onPress={handleDone}>
+            <Text style={detailStyles.doneButtonText}>Done</Text>
+          </TouchableOpacity>
+        </View>
+      </Animated.View>
+
+      {/* Delete Confirmation Modal */}
+      <Modal visible={showDeleteConfirm} transparent animationType="fade">
+        <View style={detailStyles.modalOverlay}>
+          <View style={detailStyles.modalContent}>
+            <Ionicons name="trash-outline" size={48} color="#FF4757" style={{ marginBottom: 16 }} />
+            <Text style={detailStyles.modalTitle}>Delete Entry?</Text>
+            <Text style={detailStyles.modalText}>This action cannot be undone.</Text>
+            <View style={detailStyles.modalButtons}>
+              <TouchableOpacity style={detailStyles.modalCancel} onPress={() => setShowDeleteConfirm(false)}>
+                <Text style={detailStyles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={detailStyles.modalDelete} onPress={handleDelete}>
+                <Text style={detailStyles.modalDeleteText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+};
+
+// ============ ENTRY DETAIL STYLES ============
+const detailStyles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#000' },
+  imageContainer: { height: 280, position: 'relative' },
+  image: { width: '100%', height: '100%' },
+  imagePlaceholder: { width: '100%', height: '100%', backgroundColor: '#F0F0F0', justifyContent: 'center', alignItems: 'center' },
+  imageOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.2)' },
+  backButton: { position: 'absolute', top: 50, left: 16, width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
+  deleteButton: { position: 'absolute', top: 50, right: 16, width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
+  contentCard: { flex: 1, backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, marginTop: -24, paddingHorizontal: 20, paddingTop: 20 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  timeTag: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F5F5F5', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 16 },
+  timeText: { fontSize: 13, color: '#666', marginLeft: 4 },
+  titleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },
+  title: { fontSize: 22, fontWeight: '700', color: '#1A1A1A', flex: 1, marginRight: 16 },
+  servingsControl: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF5EB', borderRadius: 20, paddingHorizontal: 4 },
+  servingBtn: { width: 32, height: 32, justifyContent: 'center', alignItems: 'center' },
+  servingsText: { fontSize: 16, fontWeight: '600', color: '#1A1A1A', minWidth: 32, textAlign: 'center' },
+  caloriesCard: { backgroundColor: '#FFF9F5', borderRadius: 16, padding: 16, marginBottom: 16 },
+  caloriesRow: { flexDirection: 'row', alignItems: 'center' },
+  caloriesIcon: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#FFF', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  caloriesLabel: { fontSize: 14, color: '#666' },
+  caloriesValue: { fontSize: 32, fontWeight: '700', color: '#1A1A1A' },
+  macrosRow: { flexDirection: 'row', marginBottom: 24 },
+  macroCard: { flex: 1, backgroundColor: '#F9F9F9', borderRadius: 12, padding: 12, marginHorizontal: 4, alignItems: 'center' },
+  macroIcon: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
+  macroLabel: { fontSize: 12, color: '#666', marginBottom: 2 },
+  macroValue: { fontSize: 18, fontWeight: '700', color: '#1A1A1A' },
+  ingredientsSection: { marginBottom: 20 },
+  ingredientsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  ingredientsTitle: { fontSize: 18, fontWeight: '700', color: '#1A1A1A' },
+  ingredientRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F9F9F9', borderRadius: 12, padding: 14, marginBottom: 8 },
+  ingredientInfo: { flex: 1 },
+  ingredientName: { fontSize: 15, fontWeight: '600', color: '#1A1A1A' },
+  ingredientCal: { fontSize: 13, color: '#666', marginTop: 2 },
+  ingredientServing: { fontSize: 14, color: '#999' },
+  noIngredients: { fontSize: 14, color: '#999', fontStyle: 'italic', textAlign: 'center', paddingVertical: 20 },
+  analysisSection: { backgroundColor: '#FFF5EB', borderRadius: 12, padding: 14, marginBottom: 20 },
+  analysisHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  analysisTitle: { fontSize: 14, fontWeight: '600', color: '#FF8C42', marginLeft: 6 },
+  analysisText: { fontSize: 14, color: '#666', lineHeight: 20 },
+  bottomButtons: { position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row', padding: 20, paddingBottom: 34, backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: '#F0F0F0' },
+  fixButton: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFF', borderWidth: 1.5, borderColor: '#FF8C42', borderRadius: 12, paddingVertical: 14, marginRight: 10 },
+  fixButtonText: { fontSize: 16, fontWeight: '600', color: '#FF8C42', marginLeft: 6 },
+  doneButton: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#1A1A1A', borderRadius: 12, paddingVertical: 14 },
+  doneButtonText: { fontSize: 16, fontWeight: '600', color: '#FFF' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  modalContent: { backgroundColor: '#FFF', borderRadius: 20, padding: 24, width: '80%', alignItems: 'center' },
+  modalTitle: { fontSize: 20, fontWeight: '700', color: '#1A1A1A', marginBottom: 8 },
+  modalText: { fontSize: 14, color: '#666', marginBottom: 24 },
+  modalButtons: { flexDirection: 'row', width: '100%' },
+  modalCancel: { flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#F0F0F0', borderRadius: 10, marginRight: 8 },
+  modalCancelText: { fontSize: 16, fontWeight: '600', color: '#666' },
+  modalDelete: { flex: 1, paddingVertical: 12, alignItems: 'center', backgroundColor: '#FF4757', borderRadius: 10 },
+  modalDeleteText: { fontSize: 16, fontWeight: '600', color: '#FFF' },
+});
+
 // ============ MAIN APP ============
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
@@ -901,10 +1250,10 @@ export default function App() {
   const [entries, setEntries] = useState<FoodEntry[]>([]);
   const [inputText, setInputText] = useState('');
   const [selectedImage, setSelectedImage] = useState<{ uri: string; base64: string } | null>(null);
-  const [showImageModal, setShowImageModal] = useState(false);
   const [selectedEntry, setSelectedEntry] = useState<FoodEntry | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showEntryDetail, setShowEntryDetail] = useState(false);
 
   // Load profile from storage
   useEffect(() => {
@@ -1001,7 +1350,11 @@ export default function App() {
         carbs: result.carbs,
         fat: result.fat,
         imageUri: selectedImage?.uri,
+        imageBase64: selectedImage?.base64,
         aiAnalysis: result.analysis,
+        ingredients: result.ingredients || [],
+        servings: 1,
+        timestamp: Date.now(),
       };
       setEntries(prev => [newEntry, ...prev]);
       setInputText('');
@@ -1013,6 +1366,24 @@ export default function App() {
       setIsAnalyzing(false);
     }
   }, [inputText, selectedImage]);
+
+  const updateEntry = useCallback((updatedEntry: FoodEntry) => {
+    setEntries(prev => prev.map(e => e.id === updatedEntry.id ? updatedEntry : e));
+  }, []);
+
+  const fixEntryIssue = useCallback(async (entry: FoodEntry): Promise<FoodEntry> => {
+    const result = await analyzeWithAI(entry.description, entry.imageBase64, entry.imageUri);
+    return {
+      ...entry,
+      calories: result.calories,
+      protein: result.protein,
+      carbs: result.carbs,
+      fat: result.fat,
+      aiAnalysis: result.analysis,
+      ingredients: result.ingredients || [],
+      servings: 1,
+    };
+  }, []);
 
   const deleteEntry = useCallback((id: string) => {
     Alert.alert('Delete Entry', 'Are you sure?', [
@@ -1044,7 +1415,7 @@ export default function App() {
     <TouchableOpacity
       key={item.id}
       style={styles.entryCard}
-      onPress={() => { setSelectedEntry(item); setShowImageModal(true); }}
+      onPress={() => { setSelectedEntry(item); setShowEntryDetail(true); }}
       onLongPress={() => deleteEntry(item.id)}
     >
       <View style={styles.entryRow}>
@@ -1086,6 +1457,21 @@ export default function App() {
     return (
       <SafeAreaProvider>
         <Settings profile={profile} onSave={saveProfile} onClose={() => setShowSettings(false)} />
+      </SafeAreaProvider>
+    );
+  }
+
+  // Show entry detail
+  if (showEntryDetail && selectedEntry) {
+    return (
+      <SafeAreaProvider>
+        <EntryDetail
+          entry={selectedEntry}
+          onClose={() => { setShowEntryDetail(false); setSelectedEntry(null); }}
+          onUpdate={updateEntry}
+          onDelete={(id) => { setEntries(prev => prev.filter(e => e.id !== id)); }}
+          onFixIssue={fixEntryIssue}
+        />
       </SafeAreaProvider>
     );
   }
@@ -1187,30 +1573,6 @@ export default function App() {
           </View>
         </View>
 
-        {/* Entry Detail Modal */}
-        <Modal visible={showImageModal} transparent animationType="fade" onRequestClose={() => setShowImageModal(false)}>
-          <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowImageModal(false)}>
-            <View style={styles.modalContent}>
-              {selectedEntry?.imageUri && <Image source={{ uri: selectedEntry.imageUri }} style={styles.modalImage} resizeMode="contain" />}
-              {selectedEntry && (
-                <View style={styles.modalInfo}>
-                  <Text style={styles.modalTitle}>{selectedEntry.description}</Text>
-                  <Text style={styles.modalCalories}>{selectedEntry.calories} calories</Text>
-                  <Text style={styles.modalMacros}>P: {selectedEntry.protein}g • C: {selectedEntry.carbs}g • F: {selectedEntry.fat}g</Text>
-                  {selectedEntry.aiAnalysis && (
-                    <View style={styles.modalAnalysisBox}>
-                      <Text style={styles.modalAnalysisTitle}>🤖 AI Analysis</Text>
-                      <Text style={styles.modalAnalysisText}>{selectedEntry.aiAnalysis}</Text>
-                    </View>
-                  )}
-                </View>
-              )}
-              <TouchableOpacity style={styles.modalCloseButton} onPress={() => setShowImageModal(false)}>
-                <Text style={styles.modalCloseText}>Close</Text>
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </Modal>
       </SafeAreaView>
     </SafeAreaProvider>
   );
@@ -1355,16 +1717,4 @@ const styles = StyleSheet.create({
   addButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#FF8C42', justifyContent: 'center', alignItems: 'center' },
   addButtonDisabled: { opacity: 0.5 },
   addButtonText: { fontSize: 24, fontWeight: '600', color: '#FFF' },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center' },
-  modalContent: { backgroundColor: '#FFF', borderRadius: 16, padding: 16, width: '90%', maxWidth: 400 },
-  modalImage: { width: '100%', height: 200, borderRadius: 12, marginBottom: 16 },
-  modalInfo: { marginBottom: 16 },
-  modalTitle: { fontSize: 18, fontWeight: '700', color: '#1A1A1A', marginBottom: 8 },
-  modalCalories: { fontSize: 24, fontWeight: '700', color: '#FF8C42', marginBottom: 4 },
-  modalMacros: { fontSize: 14, color: '#666', marginBottom: 12 },
-  modalAnalysisBox: { backgroundColor: '#F5F5F5', borderRadius: 8, padding: 12 },
-  modalAnalysisTitle: { fontSize: 13, fontWeight: '600', color: '#1A1A1A', marginBottom: 4 },
-  modalAnalysisText: { fontSize: 13, color: '#555', lineHeight: 18 },
-  modalCloseButton: { backgroundColor: '#F0F0F0', paddingVertical: 12, borderRadius: 8, alignItems: 'center' },
-  modalCloseText: { fontSize: 16, fontWeight: '600', color: '#1A1A1A' },
 });
