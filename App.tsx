@@ -1489,6 +1489,88 @@ const generateDateRange = (days: number = 30): Date[] => {
   return dates;
 };
 
+// Calculate streaks from entries
+interface StreakInfo {
+  currentStreak: number;
+  longestStreak: number;
+  isActiveToday: boolean;
+}
+
+const calculateStreaks = (entries: FoodEntry[]): StreakInfo => {
+  if (entries.length === 0) {
+    return { currentStreak: 0, longestStreak: 0, isActiveToday: false };
+  }
+
+  // Get unique dates with entries
+  const datesWithEntries = new Set<string>();
+  entries.forEach(entry => {
+    const dateKey = getDateKey(new Date(entry.timestamp));
+    datesWithEntries.add(dateKey);
+  });
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayKey = getDateKey(today);
+
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayKey = getDateKey(yesterday);
+
+  // Check if active today
+  const isActiveToday = datesWithEntries.has(todayKey);
+
+  // Calculate current streak
+  let currentStreak = 0;
+  let checkDate = new Date(today);
+
+  // If no entry today, start checking from yesterday
+  if (!isActiveToday) {
+    // If no entry yesterday either, current streak is 0
+    if (!datesWithEntries.has(yesterdayKey)) {
+      currentStreak = 0;
+    } else {
+      // Start counting from yesterday
+      checkDate = new Date(yesterday);
+      while (datesWithEntries.has(getDateKey(checkDate))) {
+        currentStreak++;
+        checkDate.setDate(checkDate.getDate() - 1);
+      }
+    }
+  } else {
+    // Entry today, count consecutive days
+    while (datesWithEntries.has(getDateKey(checkDate))) {
+      currentStreak++;
+      checkDate.setDate(checkDate.getDate() - 1);
+    }
+  }
+
+  // Calculate longest streak
+  let longestStreak = 0;
+  let tempStreak = 0;
+
+  // Sort dates and find longest consecutive run
+  const sortedDates = Array.from(datesWithEntries).sort();
+
+  for (let i = 0; i < sortedDates.length; i++) {
+    if (i === 0) {
+      tempStreak = 1;
+    } else {
+      const prevDate = new Date(sortedDates[i - 1]);
+      const currDate = new Date(sortedDates[i]);
+      const diffDays = Math.round((currDate.getTime() - prevDate.getTime()) / (1000 * 60 * 60 * 24));
+
+      if (diffDays === 1) {
+        tempStreak++;
+      } else {
+        tempStreak = 1;
+      }
+    }
+    longestStreak = Math.max(longestStreak, tempStreak);
+  }
+
+  return { currentStreak, longestStreak, isActiveToday };
+};
+
 // ============ MAIN APP ============
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
@@ -1514,6 +1596,9 @@ export default function App() {
 
   // Check if selected date is today
   const isToday = getDateKey(selectedDate) === getDateKey(new Date());
+
+  // Calculate streaks
+  const streakInfo = calculateStreaks(allEntries);
 
   // Load profile and entries from storage
   useEffect(() => {
@@ -1818,10 +1903,44 @@ export default function App() {
             <Text style={styles.headerGreeting}>Hey {profile.name || 'there'}! 👋</Text>
             <Text style={styles.headerTitle}>{getMonthYear(selectedDate)}</Text>
           </View>
-          <TouchableOpacity style={styles.settingsButton} onPress={() => setShowSettings(true)}>
-            <Ionicons name="settings-outline" size={22} color="#1A1A1A" />
-          </TouchableOpacity>
+          <View style={styles.headerRight}>
+            {/* Streak Badge */}
+            <TouchableOpacity style={styles.streakBadge}>
+              <Ionicons name="flame" size={18} color={streakInfo.currentStreak > 0 ? '#FF8C42' : '#CCC'} />
+              <Text style={[styles.streakText, streakInfo.currentStreak > 0 && styles.streakTextActive]}>
+                {streakInfo.currentStreak}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.settingsButton} onPress={() => setShowSettings(true)}>
+              <Ionicons name="settings-outline" size={22} color="#1A1A1A" />
+            </TouchableOpacity>
+          </View>
         </View>
+
+        {/* Streak Card - Show only when there's a streak */}
+        {streakInfo.currentStreak > 0 && (
+          <View style={styles.streakCard}>
+            <View style={styles.streakCardLeft}>
+              <View style={styles.streakIconContainer}>
+                <Ionicons name="flame" size={28} color="#FF8C42" />
+              </View>
+              <View>
+                <Text style={styles.streakCardTitle}>
+                  {streakInfo.currentStreak} Day Streak!
+                </Text>
+                <Text style={styles.streakCardSubtitle}>
+                  {streakInfo.isActiveToday ? 'Keep it going!' : 'Log food today to continue!'}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.streakStats}>
+              <View style={styles.streakStat}>
+                <Text style={styles.streakStatValue}>{streakInfo.longestStreak}</Text>
+                <Text style={styles.streakStatLabel}>Best</Text>
+              </View>
+            </View>
+          </View>
+        )}
 
         {/* Date Selector */}
         <View style={styles.dateSelectorContainer}>
@@ -2043,7 +2162,20 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12 },
   headerGreeting: { fontSize: 14, color: '#666' },
   headerTitle: { fontSize: 24, fontWeight: '700', color: '#1A1A1A' },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  streakBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 20, gap: 4 },
+  streakText: { fontSize: 16, fontWeight: '700', color: '#CCC' },
+  streakTextActive: { color: '#FF8C42' },
   settingsButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#FFF', justifyContent: 'center', alignItems: 'center' },
+  streakCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#FFF5EB', marginHorizontal: 20, marginBottom: 8, padding: 16, borderRadius: 16, borderWidth: 1, borderColor: '#FFE0C7' },
+  streakCardLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  streakIconContainer: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#FFF', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  streakCardTitle: { fontSize: 16, fontWeight: '700', color: '#1A1A1A' },
+  streakCardSubtitle: { fontSize: 13, color: '#666', marginTop: 2 },
+  streakStats: { flexDirection: 'row', gap: 16 },
+  streakStat: { alignItems: 'center' },
+  streakStatValue: { fontSize: 20, fontWeight: '700', color: '#FF8C42' },
+  streakStatLabel: { fontSize: 11, color: '#666', marginTop: 2 },
   dateSelectorContainer: { paddingVertical: 8 },
   dateSelectorContent: { paddingHorizontal: 16 },
   dateItem: { alignItems: 'center', paddingVertical: 10, paddingHorizontal: 14, marginHorizontal: 4, borderRadius: 16, minWidth: 56 },
