@@ -98,14 +98,18 @@ const DEFAULT_PROFILE: UserProfile = {
 
 // Calculate recommended calories based on user info
 const calculateRecommendedCalories = (profile: UserProfile): number => {
-  const { weight, height, age, gender, activityLevel, goal } = profile;
+  const { weight, height, age, gender, activityLevel, goal, useMetric } = profile;
+
+  // Convert to metric if needed (formula uses kg and cm)
+  const weightKg = useMetric ? weight : weight / 2.205;
+  const heightCm = useMetric ? height : height * 2.54;
 
   // BMR using Mifflin-St Jeor
   let bmr: number;
   if (gender === 'male') {
-    bmr = 10 * weight + 6.25 * height - 5 * age + 5;
+    bmr = 10 * weightKg + 6.25 * heightCm - 5 * age + 5;
   } else {
-    bmr = 10 * weight + 6.25 * height - 5 * age - 161;
+    bmr = 10 * weightKg + 6.25 * heightCm - 5 * age - 161;
   }
 
   // Activity multiplier
@@ -976,7 +980,6 @@ const EntryDetail: React.FC<EntryDetailProps> = ({ entry, onClose, onUpdate, onD
 
   const handleServingsChange = (delta: number) => {
     const newServings = Math.max(0.5, Math.min(10, editedEntry.servings + delta));
-    const ratio = newServings / editedEntry.servings;
     setEditedEntry({
       ...editedEntry,
       servings: newServings,
@@ -1679,23 +1682,6 @@ export default function App() {
     }
   };
 
-  const takePhoto = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Please allow access to your camera');
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 0.3,
-      base64: true,
-    });
-    if (!result.canceled && result.assets[0]?.base64) {
-      setSelectedImage({ uri: result.assets[0].uri, base64: result.assets[0].base64 });
-    }
-  };
-
   const addEntry = useCallback(async () => {
     if (!inputText.trim() && !selectedImage) return;
     setIsAnalyzing(true);
@@ -1788,7 +1774,7 @@ export default function App() {
         setInputText('Nutrition label');
       }
     }
-  }, []);
+  }, [allEntries]);
 
   const handleCameraPickImage = useCallback(async () => {
     setShowCamera(false);
@@ -2020,7 +2006,7 @@ export default function App() {
           )}
         </ScrollView>
 
-        {selectedImage && (
+        {selectedImage && isToday && (
           <View style={styles.imagePreviewContainer}>
             <Image source={{ uri: selectedImage.uri }} style={styles.imagePreview} />
             <TouchableOpacity style={styles.removeImageButton} onPress={() => setSelectedImage(null)}>
@@ -2029,39 +2015,49 @@ export default function App() {
           </View>
         )}
 
-        <View style={styles.inputSection}>
-          {isAnalyzing && (
-            <View style={styles.analyzingBanner}>
-              <ActivityIndicator size="small" color="#FF8C42" />
-              <Text style={styles.analyzingText}>🤖 AI is analyzing...</Text>
+        {isToday ? (
+          <View style={styles.inputSection}>
+            {isAnalyzing && (
+              <View style={styles.analyzingBanner}>
+                <ActivityIndicator size="small" color="#FF8C42" />
+                <Text style={styles.analyzingText}>🤖 AI is analyzing...</Text>
+              </View>
+            )}
+            <View style={styles.inputRow}>
+              <TouchableOpacity style={styles.iconButton} onPress={() => setShowCamera(true)} disabled={isAnalyzing}>
+                <Ionicons name="scan-outline" size={22} color="#1A1A1A" />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.iconButton} onPress={pickImage} disabled={isAnalyzing}>
+                <Ionicons name="image-outline" size={22} color="#1A1A1A" />
+              </TouchableOpacity>
+              <TextInput
+                style={styles.input}
+                value={inputText}
+                onChangeText={setInputText}
+                placeholder="What did you eat?"
+                placeholderTextColor="#999"
+                onSubmitEditing={addEntry}
+                returnKeyType="done"
+                editable={!isAnalyzing}
+              />
+              <TouchableOpacity
+                style={[styles.addButton, ((!inputText.trim() && !selectedImage) || isAnalyzing) ? styles.addButtonDisabled : null]}
+                onPress={addEntry}
+                disabled={(!inputText.trim() && !selectedImage) || isAnalyzing}
+              >
+                {isAnalyzing ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.addButtonText}>+</Text>}
+              </TouchableOpacity>
             </View>
-          )}
-          <View style={styles.inputRow}>
-            <TouchableOpacity style={styles.iconButton} onPress={() => setShowCamera(true)} disabled={isAnalyzing}>
-              <Ionicons name="scan-outline" size={22} color="#1A1A1A" />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.iconButton} onPress={pickImage} disabled={isAnalyzing}>
-              <Ionicons name="image-outline" size={22} color="#1A1A1A" />
-            </TouchableOpacity>
-            <TextInput
-              style={styles.input}
-              value={inputText}
-              onChangeText={setInputText}
-              placeholder="What did you eat?"
-              placeholderTextColor="#999"
-              onSubmitEditing={addEntry}
-              returnKeyType="done"
-              editable={!isAnalyzing}
-            />
-            <TouchableOpacity
-              style={[styles.addButton, ((!inputText.trim() && !selectedImage) || isAnalyzing) ? styles.addButtonDisabled : null]}
-              onPress={addEntry}
-              disabled={(!inputText.trim() && !selectedImage) || isAnalyzing}
-            >
-              {isAnalyzing ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.addButtonText}>+</Text>}
+          </View>
+        ) : (
+          <View style={styles.pastDayBanner}>
+            <Ionicons name="time-outline" size={18} color="#666" />
+            <Text style={styles.pastDayText}>Viewing {getDayName(selectedDate)}</Text>
+            <TouchableOpacity onPress={() => setSelectedDate(new Date())}>
+              <Text style={styles.goToTodayText}>Go to Today</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        )}
 
       </SafeAreaView>
     </SafeAreaProvider>
@@ -2231,4 +2227,7 @@ const styles = StyleSheet.create({
   addButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#FF8C42', justifyContent: 'center', alignItems: 'center' },
   addButtonDisabled: { opacity: 0.5 },
   addButtonText: { fontSize: 24, fontWeight: '600', color: '#FFF' },
+  pastDayBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFF', paddingVertical: 16, paddingHorizontal: 20, borderTopWidth: 1, borderTopColor: '#F0F0F0', gap: 8 },
+  pastDayText: { fontSize: 14, color: '#666' },
+  goToTodayText: { fontSize: 14, fontWeight: '600', color: '#FF8C42' },
 });
